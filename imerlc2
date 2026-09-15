@@ -68,7 +68,7 @@ task.spawn(function()
         local btn = child.MouseButton1Down and child or child:FindFirstChildWhichIsA('TextButton', true)
         if btn and btn.MouseButton1Down then
             btn.MouseButton1Down:Connect(function()
-                clickerxc(playerName)
+                clickerx(playerName)
             end)
         end
     end)
