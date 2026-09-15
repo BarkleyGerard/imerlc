@@ -4,6 +4,7 @@ local WindUI, Tabs, Players, TextChatService = _G.WindUI, _G.Tabs, game.Players,
 local lp = Players.LocalPlayer
 local modListen, cmdNotify, logChat = true, false, false
 local nc
+local pendingNames = {}
 
 local function fetchnc()
     local list = getnilinstances()
@@ -31,8 +32,6 @@ local function notify(color, text, duration)
     if not nc then return end
     pcall(nc, color, text, duration or 5, nil, nil, nil)
 end
-
-local pendingNames = {}
 
 local function getnotifcontainer()
     local pg = lp:FindFirstChild('PlayerGui')
@@ -70,32 +69,26 @@ local function attachcontainer()
     containerConn = container.ChildAdded:Connect(function(child)
         if not next(pendingNames) then return end
 
-        local function match()
-            for _, d in ipairs(child:GetDescendants()) do
-                if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
-                    for name in pairs(pendingNames) do
-                        if d.Text:find(name, 1, true) then
-                            pendingNames[name] = nil
-                            local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
-                            if btn and btn.MouseButton1Down then
-                                btn.MouseButton1Down:Connect(function()
-                                    triggerclickhint(name)
-                                end)
-                            end
-                            return true
-                        end
+        local matched
+        for _, d in ipairs(child:GetDescendants()) do
+            if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
+                for name in pairs(pendingNames) do
+                    if d.Text:find(name, 1, true) then
+                        matched = name
+                        break
                     end
                 end
             end
-            return false
+            if matched then break end
         end
+        if not matched then return end
 
-        if not match() then
-            local conn
-            conn = child.DescendantAdded:Connect(function()
-                if match() and conn then
-                    conn:Disconnect()
-                end
+        pendingNames[matched] = nil
+
+        local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
+        if btn and btn.MouseButton1Down then
+            btn.MouseButton1Down:Connect(function()
+                triggerclickhint(matched)
             end)
         end
     end)
@@ -113,7 +106,7 @@ local function triggerbuiltinnotify(playerName)
         data = {PlayerName = playerName},
     })
 
-    task.delay(16, function()
+    task.delay(20, function()
         pendingNames[playerName] = nil
     end)
 end
