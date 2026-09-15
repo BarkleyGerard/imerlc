@@ -457,6 +457,6 @@ pcall(function() sec:Open() end)
 sec:Toggle({
     Title = "more chat commands",
     Desc  = "adds :cmds / :logs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
-    Value = true,
+    Value = false,
     Callback = function(s) enabled = s end,
 })
