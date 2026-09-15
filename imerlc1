@@ -25,26 +25,32 @@ local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
 
-local guiblur = lighting:FindFirstChild("GuiBlur")
-local blurgoal = 14.75
-local blurtween = nil
+local BLURNAME = "MCL_AdminBlur"
+local blurgoal = 24
+
+local function getblur()
+    local b = lighting:FindFirstChild(BLURNAME)
+    if b and b:IsA("BlurEffect") then return b end
+    b = Instance.new("BlurEffect")
+    b.Name = BLURNAME
+    b.Size = 0
+    b.Enabled = false
+    b.Parent = lighting
+    return b
+end
 
 local function enableblur()
-    if not guiblur then return end
-    guiblur.Enabled = true
-    if blurtween then blurtween:Cancel() end
-    blurtween = tween:Create(guiblur, TweenInfo.new(0.35), { Size = blurgoal })
-    blurtween:Play()
+    local b = getblur()
+    if not b then return end
+    b.Enabled = true
+    b.Size = blurgoal
 end
 
 local function disableblur()
-    if not guiblur then return end
-    if blurtween then blurtween:Cancel() end
-    blurtween = tween:Create(guiblur, TweenInfo.new(0.35), { Size = 0 })
-    blurtween.Completed:Connect(function()
-        if guiblur.Size < 0.1 then guiblur.Enabled = false end
-    end)
-    blurtween:Play()
+    local b = lighting:FindFirstChild(BLURNAME)
+    if not b then return end
+    b.Size = 0
+    b.Enabled = false
 end
 
 local function fetchnotifycallback()
@@ -165,6 +171,15 @@ local function wirebluroff(admin)
     end)
     admin:GetPropertyChangedSignal("Visible"):Connect(function()
         if not admin.Visible then disableblur() end
+    end)
+    task.spawn(function()
+        while task.wait(1) do
+            local b = lighting:FindFirstChild(BLURNAME)
+            if not b then continue end
+            if not admin.Visible or admin.Position.Y.Scale >= 1.4 then
+                disableblur()
+            end
+        end
     end)
 end
 
