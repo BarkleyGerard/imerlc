@@ -1,0 +1,215 @@
+repeat task.wait() until _G.WindUI and _G.Functions
+
+local windui = _G.WindUI
+local tabs = _G.Tabs
+local players = game:GetService("Players")
+local replicatedstorage = game:GetService("ReplicatedStorage")
+local textchatservice = game:GetService("TextChatService")
+local tween = game:GetService("TweenService")
+local lp = players.LocalPlayer
+local enabled = true
+_G._adminLogsCache = _G._adminLogsCache or {}
+local notifycallback = nil
+local notifyready = false
+
+local function fetchnotifycallback()
+    local list
+    local ok = pcall(function() list = getnilinstances() end)
+    if not ok or type(list) ~= "table" then return false end
+    local event
+    for _, obj in ipairs(list) do
+        if obj.Name == "Function" or obj.Name == "BindableFunction" then
+            local s, cb = pcall(function() return getcallbackvalue(obj, "OnInvoke") end)
+            if s and type(cb) == "function" then event = cb; break end
+        end
+    end
+    if not event then
+        for _, obj in ipairs(list) do
+            if obj:IsA("BindableFunction") then
+                local s, cb = pcall(function() return getcallbackvalue(obj, "OnInvoke") end)
+                if s and type(cb) == "function" then event = cb; break end
+            end
+        end
+    end
+    if event then
+        notifycallback = event
+        notifyready = true
+        return true
+    end
+    return false
+end
+
+task.spawn(function()
+    task.wait(2 + math.random() * 3)
+    pcall(fetchnotifycallback)
+end)
+
+local function notify(color, text, duration)
+    if notifyready and notifycallback then
+        pcall(function()
+            notifycallback(color, text, duration or 5, nil, nil, nil)
+        end)
+    end
+end
+
+local function parsecommand(text)
+    local fc = text:sub(1, 1)
+    if fc ~= ":" and fc ~= "!" and fc ~= ";" then return nil end
+    local rest = text:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    if name == "" then return nil end
+    local after = rest:sub(#name + 1)
+    if after ~= "" and after:sub(1, 1):match("%s") == nil then return nil end
+    return name:lower()
+end
+
+local function addadminlog(actor, message)
+    table.insert(_G._adminLogsCache, 1, { actor, message, os.time() })
+end
+
+pcall(function()
+    if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
+        textchatservice.MessageReceived:Connect(function(msg)
+            if msg.TextSource then
+                local p = players:GetPlayerByUserId(msg.TextSource.UserId)
+                if p and parsecommand(msg.Text) then
+                    addadminlog(p.Name, msg.Text)
+                end
+            end
+        end)
+    else
+        local function hook(p)
+            p.Chatted:Connect(function(m)
+                if parsecommand(m) then addadminlog(p.Name, m) end
+            end)
+        end
+        for _, p in ipairs(players:GetPlayers()) do hook(p) end
+        players.PlayerAdded:Connect(hook)
+    end
+end)
+
+local commands = {
+    ":track [Player]",
+    ":load",
+    ":tocar",
+    ":to [Player]",
+    ":unjail",
+    ":unwanted",
+    ":resetdata",
+    ":killlogs (coming soon maybe)",
+    ":logs",
+    ":commands",
+    ":view",
+}
+
+local function getadmin()
+    local pg = lp:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local gm = pg:FindFirstChild("GameMenus") or pg:WaitForChild("GameMenus", 10)
+    if not gm then return nil, nil end
+    local admin = gm:FindFirstChild("Admin") or gm:WaitForChild("Admin", 5)
+    return gm, admin
+end
+
+local function renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not gm or not admin then return end
+    local adminls = admin:FindFirstChild("Admin LS")
+    if not adminls then return end
+    local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
+    if not template then return end
+    local list = admin:FindFirstChild(listname)
+    if not list then return end
+
+    for _, child in ipairs(admin:GetChildren()) do
+        if child:IsA("ScrollingFrame") then child.Visible = false end
+    end
+    for _, child in ipairs(list:GetChildren()) do
+        if child:IsA("TextLabel") then child:Destroy() end
+    end
+
+    local titlebar = admin:FindFirstChild("TitleBar")
+    if titlebar and titlebar:FindFirstChild("Title") then
+        titlebar.Title.Text = titletext
+    end
+
+    for i, item in ipairs(items) do
+        local clone = template:Clone()
+        clone.Name = "Item" .. i
+        clone.Text = labelfactory(item)
+        clone.LayoutOrder = i
+        clone.Parent = list
+    end
+
+    list.Visible = true
+
+    local layout = list:FindFirstChildOfClass("UIListLayout")
+    if layout then
+        list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+    end
+end
+
+local function openadminlist(listname, titletext, items, labelfactory)
+    renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not admin then return end
+    gm.Enabled = true
+    admin.Position = UDim2.new(0.5, 0, 1.5, 0)
+    admin.Visible = true
+    _G.InMenu = admin
+    _G.InMenuType = "Small"
+    tween:Create(
+        admin,
+        TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { Position = UDim2.new(0.5, 0, 0.5, 0) }
+    ):Play()
+end
+
+local function onlocalcommand(text)
+    local cmd = parsecommand(text)
+    if not cmd then return end
+
+    if cmd == "killlogs" or cmd == "kl" then
+        notify("Red", "sorry this doesnt work yet", 5)
+    elseif cmd == "commands" or cmd == "cmds" then
+        openadminlist("CommandsList", "Admin Commands", commands, function(c) return c end)
+    elseif cmd == "logs" then
+        local items = _G._adminLogsCache
+        if #items == 0 then
+            items = { { "no commands yet", "waiting for a command", os.time() } }
+        end
+        openadminlist("LogsList", "Admin Logs", items,
+            function(e) return tostring(e[1]) .. " - " .. tostring(e[2]) end)
+    end
+end
+
+local function handlemessage(text)
+    if not enabled then return end
+    onlocalcommand(text)
+end
+
+pcall(function()
+    if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
+        textchatservice.MessageReceived:Connect(function(msg)
+            if msg.TextSource and msg.TextSource.UserId == lp.UserId then
+                handlemessage(msg.Text)
+            end
+        end)
+    end
+end)
+
+pcall(function()
+    lp.Chatted:Connect(handlemessage)
+end)
+
+local tab = tabs.Players
+
+local sec = tab:Section({ Title = "extra commands" })
+pcall(function() sec:Open() end)
+
+sec:Toggle({
+    Title = "more chat commands",
+    Desc  = "adds :cmds/commands and :logs and killlogs (coming soon maybe)",
+    Value = true,
+    Callback = function(s) enabled = s end,
+})
