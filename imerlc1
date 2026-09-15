@@ -13,6 +13,7 @@ local players = game:GetService("Players")
 local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
+local lighting = game:GetService("Lighting")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -22,6 +23,29 @@ local notifycallback = nil
 local notifyready = false
 local currentlistname = nil
 local searchwired = false
+local bluroffwired = false
+
+local guiblur = lighting:FindFirstChild("GuiBlur")
+local blurgoal = 14.75
+local blurtween = nil
+
+local function enableblur()
+    if not guiblur then return end
+    guiblur.Enabled = true
+    if blurtween then blurtween:Cancel() end
+    blurtween = tween:Create(guiblur, TweenInfo.new(0.35), { Size = blurgoal })
+    blurtween:Play()
+end
+
+local function disableblur()
+    if not guiblur then return end
+    if blurtween then blurtween:Cancel() end
+    blurtween = tween:Create(guiblur, TweenInfo.new(0.35), { Size = 0 })
+    blurtween.Completed:Connect(function()
+        if guiblur.Size < 0.1 then guiblur.Enabled = false end
+    end)
+    blurtween:Play()
+end
 
 local function fetchnotifycallback()
     local list
@@ -131,6 +155,19 @@ local function wiresearch(admin)
     end)
 end
 
+local function wirebluroff(admin)
+    if bluroffwired then return end
+    bluroffwired = true
+    admin:GetPropertyChangedSignal("Position"):Connect(function()
+        if admin.Position.Y.Scale >= 1.4 or not admin.Visible then
+            disableblur()
+        end
+    end)
+    admin:GetPropertyChangedSignal("Visible"):Connect(function()
+        if not admin.Visible then disableblur() end
+    end)
+end
+
 local function wirehover(clone, admin)
     local hovertext = admin:FindFirstChild("HoverText")
     if not hovertext then return end
@@ -188,6 +225,7 @@ local function renderlist(listname, titletext, items, labelfactory)
     end
 
     wiresearch(admin)
+    wirebluroff(admin)
     currentlistname = listname
 end
 
@@ -200,6 +238,7 @@ local function openadminlist(listname, titletext, items, labelfactory)
     admin.Visible = true
     _G.InMenu = admin
     _G.InMenuType = "Small"
+    enableblur()
     tween:Create(
         admin,
         TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
