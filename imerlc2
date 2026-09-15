@@ -5,32 +5,49 @@ local lp = Players.LocalPlayer
 local modListen, cmdNotify, logChat = true, false, false
 local nc
 local pendingNames = {}
+local containerConn
+local hookedContainer
 
-local function fetchnc()
+local function fetchpush()
+    local ok, env = pcall(getrenv)
+    if ok and env and type(env._G) == 'table' then
+        local p = env._G.PushNotification
+        if type(p) == 'function' then return p end
+    end
+    return nil
+end
+
+local function coldfetch()
     local list = getnilinstances()
-    if type(list) ~= 'table' then return false end
-
+    if type(list) ~= 'table' then return end
     for _, obj in ipairs(list) do
         if obj:IsA('BindableFunction') then
             local ok, cb = pcall(getcallbackvalue, obj, 'OnInvoke')
             if ok and type(cb) == 'function' then
                 nc = cb
-                return true
+                return
             end
         end
     end
-
-    return false
 end
 
 task.spawn(function()
-    task.wait(2 + math.random() * 3)
-    pcall(fetchnc)
+    for _ = 1, 30 do
+        if fetchpush() then return end
+        coldfetch()
+        if nc then return end
+        task.wait(0.5)
+    end
 end)
 
 local function notify(color, text, duration)
-    if not nc then return end
-    pcall(nc, color, text, duration or 5, nil, nil, nil)
+    local push = fetchpush()
+    if not push then
+        if not nc then coldfetch() end
+        push = nc
+    end
+    if not push then return end
+    pcall(push, color, text, duration or 5, nil, nil, nil)
 end
 
 local function getnotifcontainer()
@@ -50,45 +67,51 @@ local function triggerclickhint(playerName)
     notify('Yellow', [[so i kinda dont know how erx detects chat commands so just open chat and do ctrl v and enter sorry]], 20)
 end
 
-local containerConn
-
 local function attachcontainer()
     if containerConn then
-        containerConn:Disconnect()
+        pcall(function() containerConn:Disconnect() end)
         containerConn = nil
     end
+    hookedContainer = nil
 
     local container
-    for _ = 1, 30 do
+    for _ = 1, 60 do
         container = getnotifcontainer()
         if container then break end
         task.wait(0.5)
     end
     if not container then return end
 
+    hookedContainer = container
     containerConn = container.ChildAdded:Connect(function(child)
         if not next(pendingNames) then return end
 
-        local matched
-        for _, d in ipairs(child:GetDescendants()) do
-            if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
-                for name in pairs(pendingNames) do
-                    if d.Text:find(name, 1, true) then
-                        matched = name
-                        break
+        local function match()
+            for _, d in ipairs(child:GetDescendants()) do
+                if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
+                    for name in pairs(pendingNames) do
+                        if d.Text:find(name, 1, true) then
+                            pendingNames[name] = nil
+                            local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
+                            if btn and btn.MouseButton1Down then
+                                btn.MouseButton1Down:Connect(function()
+                                    triggerclickhint(name)
+                                end)
+                            end
+                            return true
+                        end
                     end
                 end
             end
-            if matched then break end
+            return false
         end
-        if not matched then return end
 
-        pendingNames[matched] = nil
-
-        local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
-        if btn and btn.MouseButton1Down then
-            btn.MouseButton1Down:Connect(function()
-                triggerclickhint(matched)
+        if not match() then
+            local conn
+            conn = child.DescendantAdded:Connect(function()
+                if match() and conn then
+                    conn:Disconnect()
+                end
             end)
         end
     end)
@@ -96,12 +119,25 @@ end
 
 task.spawn(attachcontainer)
 
+task.spawn(function()
+    while task.wait(3) do
+        if not hookedContainer or not hookedContainer:IsDescendantOf(lp.PlayerGui) then
+            task.spawn(attachcontainer)
+        end
+    end
+end)
+
 local function triggerbuiltinnotify(playerName)
-    if not nc then return end
+    local push = fetchpush()
+    if not push then
+        if not nc then coldfetch() end
+        push = nc
+    end
+    if not push then return end
 
     pendingNames[playerName] = true
 
-    pcall(nc, 'Yellow', playerName .. ' has requested assistance! Click to go assist them!', 15, nil, {
+    pcall(push, 'Yellow', playerName .. ' has requested assistance! Click to go assist them!', 15, nil, {
         name = 'ModHelpTeleport',
         data = {PlayerName = playerName},
     })
@@ -197,9 +233,23 @@ else
     Players.PlayerAdded:Connect(hook)
 end
 
-lp.CharacterAdded:Connect(function()
-    task.wait(1)
+local function onrespawn()
+    nc = nil
+    pendingNames = {}
     task.spawn(attachcontainer)
+    task.spawn(function()
+        for _ = 1, 60 do
+            if fetchpush() then return end
+            coldfetch()
+            if nc then return end
+            task.wait(0.5)
+        end
+    end)
+end
+
+lp.CharacterAdded:Connect(function()
+    task.wait(1.5)
+    onrespawn()
 end)
 
 local tab = Tabs.Players
