@@ -178,7 +178,7 @@ local function onlocalcommand(text)
         if #items == 0 then
             items = { { "no commands yet", "waiting for a command", os.time() } }
         end
-        openadminlist("LogsList", "Admin Logs", items,
+        openadminlist("LogsList", "Command Logs", items,
             function(e) return tostring(e[1]) .. " - " .. tostring(e[2]) end)
     end
 end
