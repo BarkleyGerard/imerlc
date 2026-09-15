@@ -175,9 +175,10 @@ local function wirebluroff(admin)
     task.spawn(function()
         while task.wait(1) do
             local b = lighting:FindFirstChild(BLURNAME)
-            if not b then continue end
-            if not admin.Visible or admin.Position.Y.Scale >= 1.4 then
-                disableblur()
+            if b then
+                if not admin.Visible or admin.Position.Y.Scale >= 1.4 then
+                    disableblur()
+                end
             end
         end
     end)
@@ -195,13 +196,85 @@ local function wirehover(clone, admin)
     end)
 end
 
+local function wirecommandhover(clone)
+    local desc = clone:FindFirstChild("Description")
+    local orig = clone:FindFirstChild("OriginalText")
+    if not desc or not orig then return end
+    pcall(function() clone.RichText = true end)
+    clone.MouseEnter:Connect(function()
+        clone.Text = desc.Value
+    end)
+    clone.MouseLeave:Connect(function()
+        clone.Text = orig.Value
+    end)
+end
+
+local customcommands = {
+    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
+    { cmd = ":load",     args = {},                        desc = "Loads the current vehicle.", aliases = {} },
+    { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
+    { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
+    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail.", aliases = {} },
+    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level.", aliases = {} },
+    { cmd = ":resetdata",args = {},                        desc = "Resets your session data.", aliases = {} },
+    { cmd = ":killlogs", args = {},                        desc = "Shows kill logs (work in progress).", aliases = { "kl" } },
+    { cmd = ":logs",     args = { "[Player]" },            desc = "Shows command logs, filtered to a player.", aliases = {} },
+    { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
+    { cmd = ":commands", args = {},                        desc = "Opens this command list.", aliases = { "cmds" } },
+    { cmd = ":view",     args = { "[Player]" },            desc = "Views a player.", aliases = {} },
+}
+
+local function buildcommanditems(adminls, list)
+    local template = adminls:FindFirstChild("CommandListItem")
+    if not template then return false end
+
+    local header = template:Clone()
+    header.Name = "CustomHeader"
+    header.Text = "<b>Custom Commands</b>"
+    header.LayoutOrder = 0
+    header.RichText = true
+    pcall(function() header.TextScaled = false end)
+    header.Parent = list
+
+    local order = 0
+    for _, spec in ipairs(customcommands) do
+        order += 1
+        local item = template:Clone()
+        item.Name = spec.cmd
+        item.LayoutOrder = order
+        item.RichText = true
+        pcall(function() item.TextScaled = false end)
+
+        local text = spec.cmd
+        for _, a in ipairs(spec.args) do
+            text = text .. " " .. a
+        end
+        item.Text = text
+
+        local desc = item:FindFirstChild("Description")
+        if desc then
+            local d = spec.desc
+            if #spec.aliases > 0 then
+                d = d .. " <b>Aliases:</b> " .. table.concat(spec.aliases, " ")
+            end
+            desc.Value = d
+        end
+        local orig = item:FindFirstChild("OriginalText")
+        if orig then
+            orig.Value = text
+        end
+
+        item.Parent = list
+        wirecommandhover(item)
+    end
+    return true
+end
+
 local function renderlist(listname, titletext, items, labelfactory)
     local gm, admin = getadmin()
     if not gm or not admin then return end
     local adminls = admin:FindFirstChild("Admin LS")
     if not adminls then return end
-    local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
-    if not template then return end
     local list = admin:FindFirstChild(listname)
     if not list then return end
 
@@ -223,13 +296,19 @@ local function renderlist(listname, titletext, items, labelfactory)
         if search:IsA("TextBox") then search.Text = "" end
     end
 
-    for i, item in ipairs(items) do
-        local clone = template:Clone()
-        clone.Name = "Item" .. i
-        clone.Text = labelfactory(item)
-        clone.LayoutOrder = i
-        clone.Parent = list
-        wirehover(clone, admin)
+    if listname == "CommandsList" then
+        buildcommanditems(adminls, list)
+    else
+        local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
+        if not template then return end
+        for i, item in ipairs(items) do
+            local clone = template:Clone()
+            clone.Name = "Item" .. i
+            clone.Text = labelfactory(item)
+            clone.LayoutOrder = i
+            clone.Parent = list
+            wirehover(clone, admin)
+        end
     end
 
     list.Visible = true
@@ -369,21 +448,6 @@ pcall(function()
     if conn then table.insert(_G._adminCommandsLoaded, conn) end
 end)
 
-local commands = {
-    ":track [Player]",
-    ":load",
-    ":tocar",
-    ":to [Player]",
-    ":unjail",
-    ":unwanted",
-    ":resetdata",
-    ":killlogs (coming soon maybe)",
-    ":logs [Player]",
-    ":log [Player] [Reason]",
-    ":commands",
-    ":view",
-}
-
 local function onlocalcommand(text)
     local cmd = parsecommandname(text)
     if not cmd then return end
@@ -395,7 +459,7 @@ local function onlocalcommand(text)
     if cmd == ":killlogs" or cmd == ":kl" then
         notify("Red", "sorry this doesnt work yet", 5)
     elseif cmd == ":commands" or cmd == ":cmds" then
-        openadminlist("CommandsList", "Admin Commands", commands, function(c) return c end)
+        openadminlist("CommandsList", "Admin Commands", {}, function(c) return c end)
     elseif cmd == ":logs" then
         openlogswith(argstr)
     elseif cmd == ":log" then
@@ -457,6 +521,6 @@ pcall(function() sec:Open() end)
 sec:Toggle({
     Title = "more chat commands",
     Desc  = "adds :cmds / :logs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
-    Value = false,
+    Value = true,
     Callback = function(s) enabled = s end,
 })
