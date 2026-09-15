@@ -85,41 +85,6 @@ local function resolveplayer(prefix)
     return nil
 end
 
-local function extractparts(message)
-    local cmd = parsecommandname(message)
-    if not cmd then return nil end
-    local rest = message:sub(2):gsub("^%s+", "")
-    local name = rest:match("^(%a+)") or ""
-    local after = rest:sub(#name + 1):gsub("^%s+", "")
-    local target = ""
-    local reason = ""
-    if after ~= "" then
-        local firstarg, remainder = after:match("^(%S+)%s*(.*)$")
-        if firstarg then
-            local p = resolveplayer(firstarg)
-            if p then
-                target = p.Name
-                if name:lower() == "log" and remainder and remainder ~= "" then
-                    reason = remainder:gsub("^%s+", ""):gsub("%s+$", "")
-                end
-            end
-        end
-    end
-    return cmd, target, reason
-end
-
-local function loglabel(e)
-    local actor = tostring(e[1] or "?")
-    local cmd = tostring(e[2] or "")
-    local tgt = tostring(e[3] or "")
-    local rsn = tostring(e[4] or "")
-    local parts = { actor }
-    if cmd ~= "" then table.insert(parts, cmd) end
-    if tgt ~= "" then table.insert(parts, tgt) end
-    if rsn ~= "" then table.insert(parts, rsn) end
-    return table.concat(parts, " --> ")
-end
-
 function getadmin()
     local pg = lp:FindFirstChild("PlayerGui")
     if not pg then return nil, nil end
@@ -129,20 +94,28 @@ function getadmin()
     return gm, admin
 end
 
-local function wirehover(clone, admin)
-    local hovertext = admin:FindFirstChild("HoverText")
-    if not hovertext then return end
-    clone.MouseEnter:Connect(function()
-        if clone.TextFits then
-            hovertext.Visible = false
+local function filterlist(admin, needle)
+    for _, frame in ipairs(admin:GetChildren()) do
+        if frame:IsA("ScrollingFrame") and frame.Visible then
+            if needle == "" then
+                for _, lbl in ipairs(frame:GetChildren()) do
+                    if lbl:IsA("TextLabel") then lbl.Visible = true end
+                end
+            else
+                local low = needle:lower()
+                for _, lbl in ipairs(frame:GetChildren()) do
+                    if lbl:IsA("TextLabel") then
+                        if string.find(lbl.Text:lower(), low, 1, true) then
+                            lbl.Visible = true
+                        else
+                            lbl.Visible = false
+                        end
+                    end
+                end
+            end
             return
         end
-        hovertext.Text = clone.Text
-        hovertext.Visible = true
-    end)
-    clone.MouseLeave:Connect(function()
-        hovertext.Visible = false
-    end)
+    end
 end
 
 local function wiresearch(admin)
@@ -150,28 +123,23 @@ local function wiresearch(admin)
     local search = admin:FindFirstChild("Search")
     if not search or not search:IsA("TextBox") then return end
     searchwired = true
+    search:GetPropertyChangedSignal("Text"):Connect(function()
+        filterlist(admin, search.Text or "")
+    end)
     search.FocusLost:Connect(function()
-        local needle = search.Text or ""
-        for _, frame in ipairs(admin:GetChildren()) do
-            if frame:IsA("ScrollingFrame") and frame.Visible then
-                if needle == "" then
-                    for _, lbl in ipairs(frame:GetChildren()) do
-                        if lbl:IsA("TextLabel") then lbl.Visible = true end
-                    end
-                    return
-                end
-                for _, lbl in ipairs(frame:GetChildren()) do
-                    if lbl:IsA("TextLabel") then
-                        if string.find(lbl.Text:lower(), needle:lower(), 1, true) then
-                            lbl.Visible = true
-                        else
-                            lbl.Visible = false
-                        end
-                    end
-                end
-                return
-            end
-        end
+        filterlist(admin, search.Text or "")
+    end)
+end
+
+local function wirehover(clone, admin)
+    local hovertext = admin:FindFirstChild("HoverText")
+    if not hovertext then return end
+    clone.MouseEnter:Connect(function()
+        hovertext.Text = clone.Text
+        hovertext.Visible = true
+    end)
+    clone.MouseLeave:Connect(function()
+        hovertext.Visible = false
     end)
 end
 
@@ -209,7 +177,6 @@ local function renderlist(listname, titletext, items, labelfactory)
         clone.Text = labelfactory(item)
         clone.LayoutOrder = i
         clone.Parent = list
-        pcall(function() clone.TextScaled = false end)
         wirehover(clone, admin)
     end
 
@@ -240,6 +207,10 @@ local function openadminlist(listname, titletext, items, labelfactory)
     ):Play()
 end
 
+local function loglabel(e)
+    return tostring(e[1] or "?") .. " - " .. tostring(e[2] or "")
+end
+
 local function openlogswith(filter)
     local items = _G._adminLogsCache
     if filter and filter ~= "" then
@@ -247,20 +218,18 @@ local function openlogswith(filter)
         local filtered = {}
         for _, e in ipairs(items) do
             local actor = tostring(e[1] or ""):lower()
-            local tgt = tostring(e[3] or ""):lower()
-            if actor:sub(1, #pfx) == pfx
-                or (tgt ~= "" and tgt:sub(1, #pfx) == pfx) then
+            if actor:sub(1, #pfx) == pfx then
                 table.insert(filtered, e)
             end
         end
         items = filtered
         if #items == 0 then
-            items = { { "no matches", "", "", "", 0 } }
+            items = { { "no matches", "no logs matching '" .. filter .. "'" } }
         end
     elseif #items == 0 then
-        items = { { "no commands yet", "", "", "", 0 } }
+        items = { { "no commands yet", "waiting for a command" } }
     end
-    openadminlist("LogsList", "Command Logs", items, loglabel)
+    openadminlist("LogsList", "Admin Logs", items, loglabel)
 end
 
 local function onentryadded()
@@ -269,7 +238,7 @@ local function onentryadded()
             pcall(function()
                 local items = _G._adminLogsCache
                 if #items == 0 then
-                    items = { { "no commands yet", "", "", "", 0 } }
+                    items = { { "no commands yet", "waiting for a command" } }
                 end
                 local gm, admin = getadmin()
                 if not admin then return end
@@ -287,12 +256,15 @@ local function onentryadded()
                     clone.Text = loglabel(item)
                     clone.LayoutOrder = i
                     clone.Parent = list
-                    pcall(function() clone.TextScaled = false end)
                     wirehover(clone, admin)
                 end
                 local layout = list:FindFirstChildOfClass("UIListLayout")
                 if layout then
                     list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+                end
+                local search = admin:FindFirstChild("Search")
+                if search and search:IsA("TextBox") and search.Text ~= "" then
+                    filterlist(admin, search.Text)
                 end
             end)
         end)
@@ -300,10 +272,8 @@ local function onentryadded()
 end
 
 local function addadminlog(actor, message)
-    local cmd, target, reason = extractparts(message)
-    if not cmd then return end
-    if type(actor) ~= "string" or actor == "" then return end
-    table.insert(_G._adminLogsCache, 1, { actor, cmd, target, reason, os.time() })
+    if type(actor) ~= "string" or actor == "" then actor = "Remote Server" end
+    table.insert(_G._adminLogsCache, 1, { actor, message })
     onentryadded()
 end
 
@@ -315,19 +285,27 @@ pcall(function()
         local now = tick()
         if seen[key] and (now - seen[key]) < 2 then return end
         seen[key] = now
-        addadminlog(actor, message)
+        if parsecommandname(message) then
+            addadminlog(actor, message)
+        end
     end
 
     if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
         conn = textchatservice.MessageReceived:Connect(function(msg)
-            if msg.TextSource then
-                local p = players:GetPlayerByUserId(msg.TextSource.UserId)
-                if p then onreceived(p.Name, msg.Text) end
+            local text = msg.Text or ""
+            if not parsecommandname(text) then return end
+            local p = msg.TextSource and players:GetPlayerByUserId(msg.TextSource.UserId)
+            if p then
+                onreceived(p.Name, text)
+            else
+                onreceived("Remote Server", text)
             end
         end)
     else
         local function hook(p)
-            local c = p.Chatted:Connect(function(m) onreceived(p.Name, m) end)
+            local c = p.Chatted:Connect(function(m)
+                if parsecommandname(m) then addadminlog(p.Name, m) end
+            end)
             table.insert(_G._adminCommandsLoaded, c)
         end
         for _, p in ipairs(players:GetPlayers()) do hook(p) end
