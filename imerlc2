@@ -1,279 +1,529 @@
 repeat task.wait() until _G.WindUI and _G.Functions
 
-local WindUI, Tabs, Players, TextChatService = _G.WindUI, _G.Tabs, game.Players, game.TextChatService
-local lp = Players.LocalPlayer
-local modListen, cmdNotify, logChat = true, false, false
-local nc
-local pendingNames = {}
-local containerConn
-local hookedContainer
+if _G._adminCommandsLoaded then
+    for _, c in ipairs(_G._adminCommandsLoaded) do
+        pcall(function() c:Disconnect() end)
+    end
+end
+_G._adminCommandsLoaded = {}
 
-local function fetchpush()
-    local ok, env = pcall(getrenv)
-    if ok and env and type(env._G) == 'table' then
-        local p = env._G.PushNotification
-        if type(p) == 'function' then return p end
+local windui = _G.WindUI
+local tabs = _G.Tabs
+local players = game:GetService("Players")
+local replicatedstorage = game:GetService("ReplicatedStorage")
+local textchatservice = game:GetService("TextChatService")
+local tween = game:GetService("TweenService")
+local lighting = game:GetService("Lighting")
+local lp = players.LocalPlayer
+local enabled = true
+
+_G._adminLogsCache = {}
+
+local notifycallback = nil
+local notifyready = false
+local currentlistname = nil
+local searchwired = false
+local bluroffwired = false
+
+local BLURNAME = "MCL_AdminBlur"
+local blurgoal = 24
+
+local function getblur()
+    local b = lighting:FindFirstChild(BLURNAME)
+    if b and b:IsA("BlurEffect") then return b end
+    b = Instance.new("BlurEffect")
+    b.Name = BLURNAME
+    b.Size = 0
+    b.Enabled = false
+    b.Parent = lighting
+    return b
+end
+
+local function enableblur()
+    local b = getblur()
+    if not b then return end
+    b.Enabled = true
+    b.Size = blurgoal
+end
+
+local function disableblur()
+    local b = lighting:FindFirstChild(BLURNAME)
+    if not b then return end
+    b.Size = 0
+    b.Enabled = false
+end
+
+local function fetchnotifycallback()
+    local list
+    local ok = pcall(function() list = getnilinstances() end)
+    if not ok or type(list) ~= "table" then return false end
+    local event
+    for _, obj in ipairs(list) do
+        if obj.Name == "Function" or obj.Name == "BindableFunction" then
+            local s, cb = pcall(function() return getcallbackvalue(obj, "OnInvoke") end)
+            if s and type(cb) == "function" then event = cb; break end
+        end
+    end
+    if not event then
+        for _, obj in ipairs(list) do
+            if obj:IsA("BindableFunction") then
+                local s, cb = pcall(function() return getcallbackvalue(obj, "OnInvoke") end)
+                if s and type(cb) == "function" then event = cb; break end
+            end
+        end
+    end
+    if event then
+        notifycallback = event
+        notifyready = true
+        return true
+    end
+    return false
+end
+
+task.spawn(function()
+    task.wait(2 + math.random() * 3)
+    pcall(fetchnotifycallback)
+end)
+
+local function notify(color, text, duration)
+    if notifyready and notifycallback then
+        pcall(function()
+            notifycallback(color, text, duration or 5, nil, nil, nil)
+        end)
+    end
+end
+
+local function parsecommandname(text)
+    local fc = text:sub(1, 1)
+    if fc ~= ":" and fc ~= "!" and fc ~= ";" then return nil end
+    local rest = text:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    if name == "" then return nil end
+    local after = rest:sub(#name + 1)
+    if after ~= "" and after:sub(1, 1):match("%s") == nil then return nil end
+    return ":" .. name:lower()
+end
+
+local function resolveplayer(prefix)
+    if not prefix or prefix == "" then return nil end
+    local pfx = prefix:lower()
+    for _, p in ipairs(players:GetPlayers()) do
+        if p.Name:lower():sub(1, #pfx) == pfx then return p end
+        local dn = p.DisplayName or ""
+        if dn:lower():sub(1, #pfx) == pfx then return p end
     end
     return nil
 end
 
-local function coldfetch()
-    local list = getnilinstances()
-    if type(list) ~= 'table' then return end
-    for _, obj in ipairs(list) do
-        if obj:IsA('BindableFunction') then
-            local ok, cb = pcall(getcallbackvalue, obj, 'OnInvoke')
-            if ok and type(cb) == 'function' then
-                nc = cb
-                return
-            end
-        end
-    end
+function getadmin()
+    local pg = lp:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local gm = pg:FindFirstChild("GameMenus") or pg:WaitForChild("GameMenus", 10)
+    if not gm then return nil, nil end
+    local admin = gm:FindFirstChild("Admin") or gm:WaitForChild("Admin", 5)
+    return gm, admin
 end
 
-task.spawn(function()
-    for _ = 1, 30 do
-        if fetchpush() then return end
-        coldfetch()
-        if nc then return end
-        task.wait(0.5)
-    end
-end)
-
-local function notify(color, text, duration)
-    local push = fetchpush()
-    if not push then
-        if not nc then coldfetch() end
-        push = nc
-    end
-    if not push then return end
-    pcall(push, color, text, duration or 5, nil, nil, nil)
-end
-
-local function getnotifcontainer()
-    local pg = lp:FindFirstChild('PlayerGui')
-    if not pg then return nil end
-    local gg = pg:FindFirstChild('GameGui')
-    if not gg then return nil end
-    local bl = gg:FindFirstChild('BottomLeft')
-    if not bl then return nil end
-    return bl:FindFirstChild('Notifications')
-end
-
-local function triggerclickhint(playerName)
-    if setclipboard then
-        setclipboard(':to ' .. playerName)
-    end
-    notify('Yellow', [[so i kinda dont know how erx detects chat commands so just open chat and do ctrl v and enter sorry]], 20)
-end
-
-local function attachcontainer()
-    if containerConn then
-        pcall(function() containerConn:Disconnect() end)
-        containerConn = nil
-    end
-    hookedContainer = nil
-
-    local container
-    for _ = 1, 60 do
-        container = getnotifcontainer()
-        if container then break end
-        task.wait(0.5)
-    end
-    if not container then return end
-
-    hookedContainer = container
-    containerConn = container.ChildAdded:Connect(function(child)
-        if not next(pendingNames) then return end
-
-        local function match()
-            for _, d in ipairs(child:GetDescendants()) do
-                if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
-                    for name in pairs(pendingNames) do
-                        if d.Text:find(name, 1, true) then
-                            pendingNames[name] = nil
-                            local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
-                            if btn and btn.MouseButton1Down then
-                                btn.MouseButton1Down:Connect(function()
-                                    triggerclickhint(name)
-                                end)
-                            end
-                            return true
+local function filterlist(admin, needle)
+    for _, frame in ipairs(admin:GetChildren()) do
+        if frame:IsA("ScrollingFrame") and frame.Visible then
+            if needle == "" then
+                for _, lbl in ipairs(frame:GetChildren()) do
+                    if lbl:IsA("TextLabel") then lbl.Visible = true end
+                end
+            else
+                local low = needle:lower()
+                for _, lbl in ipairs(frame:GetChildren()) do
+                    if lbl:IsA("TextLabel") then
+                        if string.find(lbl.Text:lower(), low, 1, true) then
+                            lbl.Visible = true
+                        else
+                            lbl.Visible = false
                         end
                     end
                 end
             end
-            return false
+            return
+        end
+    end
+end
+
+local function wiresearch(admin)
+    if searchwired then return end
+    local search = admin:FindFirstChild("Search")
+    if not search or not search:IsA("TextBox") then return end
+    searchwired = true
+    search:GetPropertyChangedSignal("Text"):Connect(function()
+        filterlist(admin, search.Text or "")
+    end)
+    search.FocusLost:Connect(function()
+        filterlist(admin, search.Text or "")
+    end)
+end
+
+local function wirebluroff(admin)
+    if bluroffwired then return end
+    bluroffwired = true
+    admin:GetPropertyChangedSignal("Position"):Connect(function()
+        if admin.Position.Y.Scale >= 1.4 or not admin.Visible then
+            disableblur()
+        end
+    end)
+    admin:GetPropertyChangedSignal("Visible"):Connect(function()
+        if not admin.Visible then disableblur() end
+    end)
+    task.spawn(function()
+        while task.wait(1) do
+            local b = lighting:FindFirstChild(BLURNAME)
+            if b then
+                if not admin.Visible or admin.Position.Y.Scale >= 1.4 then
+                    disableblur()
+                end
+            end
+        end
+    end)
+end
+
+local function wirehover(clone, admin)
+    local hovertext = admin:FindFirstChild("HoverText")
+    if not hovertext then return end
+    clone.MouseEnter:Connect(function()
+        hovertext.Text = clone.Text
+        hovertext.Visible = true
+    end)
+    clone.MouseLeave:Connect(function()
+        hovertext.Visible = false
+    end)
+end
+
+local function wirecommandhover(clone)
+    local desc = clone:FindFirstChild("Description")
+    local orig = clone:FindFirstChild("OriginalText")
+    if not desc or not orig then return end
+    pcall(function() clone.RichText = true end)
+    clone.MouseEnter:Connect(function()
+        clone.Text = desc.Value
+    end)
+    clone.MouseLeave:Connect(function()
+        clone.Text = orig.Value
+    end)
+end
+
+local PRIVATE_NOTE = " <b>Only works for private servers.</b>"
+
+local customcommands = {
+    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
+    { cmd = ":load",     args = {},                        desc = "Loads the current vehicle.", aliases = {} },
+    { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
+    { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
+    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail." .. PRIVATE_NOTE, aliases = {} },
+    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level." .. PRIVATE_NOTE, aliases = {} },
+    { cmd = ":resetdata",args = {},                        desc = "Resets your session data." .. PRIVATE_NOTE, aliases = {} },
+    { cmd = ":killlogs", args = {},                        desc = "Shows kill logs (work in progress).", aliases = { "kl" } },
+    { cmd = ":logs",     args = { "[Player]" },            desc = "Shows command logs, filtered to a player.", aliases = {} },
+    { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
+    { cmd = ":commands", args = {},                        desc = "Opens this command list.", aliases = { "cmds" } },
+    { cmd = ":view",     args = { "[Player]" },            desc = "Views a player.", aliases = {} },
+}
+
+local function buildcommanditems(adminls, list)
+    local template = adminls:FindFirstChild("CommandListItem")
+    if not template then return false end
+
+    local header = template:Clone()
+    header.Name = "CustomHeader"
+    header.Text = "<b>Custom Commands</b>"
+    header.LayoutOrder = 0
+    header.RichText = true
+    pcall(function() header.TextScaled = false end)
+    header.Parent = list
+
+    local order = 0
+    for _, spec in ipairs(customcommands) do
+        order += 1
+        local item = template:Clone()
+        item.Name = spec.cmd
+        item.LayoutOrder = order
+        item.RichText = true
+        pcall(function() item.TextScaled = false end)
+
+        local text = spec.cmd
+        for _, a in ipairs(spec.args) do
+            text = text .. " " .. a
+        end
+        item.Text = text
+
+        local desc = item:FindFirstChild("Description")
+        if desc then
+            local d = spec.desc
+            if #spec.aliases > 0 then
+                d = d .. " <b>Aliases:</b> " .. table.concat(spec.aliases, " ")
+            end
+            desc.Value = d
+        end
+        local orig = item:FindFirstChild("OriginalText")
+        if orig then
+            orig.Value = text
         end
 
-        if not match() then
-            local conn
-            conn = child.DescendantAdded:Connect(function()
-                if match() and conn then
-                    conn:Disconnect()
+        item.Parent = list
+        wirecommandhover(item)
+    end
+    return true
+end
+
+local function renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not gm or not admin then return end
+    local adminls = admin:FindFirstChild("Admin LS")
+    if not adminls then return end
+    local list = admin:FindFirstChild(listname)
+    if not list then return end
+
+    for _, child in ipairs(admin:GetChildren()) do
+        if child:IsA("ScrollingFrame") then child.Visible = false end
+    end
+    for _, child in ipairs(list:GetChildren()) do
+        if child:IsA("TextLabel") then child:Destroy() end
+    end
+
+    local titlebar = admin:FindFirstChild("TitleBar")
+    if titlebar and titlebar:FindFirstChild("Title") then
+        titlebar.Title.Text = titletext
+    end
+
+    local search = admin:FindFirstChild("Search")
+    if search then
+        search.Visible = (listname == "LogsList")
+        if search:IsA("TextBox") then search.Text = "" end
+    end
+
+    if listname == "CommandsList" then
+        buildcommanditems(adminls, list)
+    else
+        local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
+        if not template then return end
+        for i, item in ipairs(items) do
+            local clone = template:Clone()
+            clone.Name = "Item" .. i
+            clone.Text = labelfactory(item)
+            clone.LayoutOrder = i
+            clone.Parent = list
+            wirehover(clone, admin)
+        end
+    end
+
+    list.Visible = true
+
+    local layout = list:FindFirstChildOfClass("UIListLayout")
+    if layout then
+        list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+    end
+
+    wiresearch(admin)
+    wirebluroff(admin)
+    currentlistname = listname
+end
+
+local function openadminlist(listname, titletext, items, labelfactory)
+    renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not admin then return end
+    gm.Enabled = true
+    admin.Position = UDim2.new(0.5, 0, 1.5, 0)
+    admin.Visible = true
+    _G.InMenu = admin
+    _G.InMenuType = "Small"
+    enableblur()
+    tween:Create(
+        admin,
+        TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { Position = UDim2.new(0.5, 0, 0.5, 0) }
+    ):Play()
+end
+
+local function loglabel(e)
+    return tostring(e[1] or "?") .. " - " .. tostring(e[2] or "")
+end
+
+local function openlogswith(filter)
+    local items = _G._adminLogsCache
+    if filter and filter ~= "" then
+        local pfx = filter:lower()
+        local filtered = {}
+        for _, e in ipairs(items) do
+            local actor = tostring(e[1] or ""):lower()
+            if actor:sub(1, #pfx) == pfx then
+                table.insert(filtered, e)
+            end
+        end
+        items = filtered
+        if #items == 0 then
+            items = { { "no matches", "no logs matching '" .. filter .. "'" } }
+        end
+    elseif #items == 0 then
+        items = { { "no commands yet", "waiting for a command" } }
+    end
+    openadminlist("LogsList", "Admin Logs", items, loglabel)
+end
+
+local function onentryadded()
+    if currentlistname == "LogsList" then
+        task.spawn(function()
+            pcall(function()
+                local items = _G._adminLogsCache
+                if #items == 0 then
+                    items = { { "no commands yet", "waiting for a command" } }
+                end
+                local gm, admin = getadmin()
+                if not admin then return end
+                local list = admin:FindFirstChild("LogsList")
+                if not list or not list.Visible then return end
+                local adminls = admin:FindFirstChild("Admin LS")
+                local template = adminls and (adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem"))
+                if not template then return end
+                for _, child in ipairs(list:GetChildren()) do
+                    if child:IsA("TextLabel") then child:Destroy() end
+                end
+                for i, item in ipairs(items) do
+                    local clone = template:Clone()
+                    clone.Name = "Item" .. i
+                    clone.Text = loglabel(item)
+                    clone.LayoutOrder = i
+                    clone.Parent = list
+                    wirehover(clone, admin)
+                end
+                local layout = list:FindFirstChildOfClass("UIListLayout")
+                if layout then
+                    list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+                end
+                local search = admin:FindFirstChild("Search")
+                if search and search:IsA("TextBox") and search.Text ~= "" then
+                    filterlist(admin, search.Text)
                 end
             end)
-        end
-    end)
-end
-
-task.spawn(attachcontainer)
-
-task.spawn(function()
-    while task.wait(3) do
-        if not hookedContainer or not hookedContainer:IsDescendantOf(lp.PlayerGui) then
-            task.spawn(attachcontainer)
-        end
-    end
-end)
-
-local function triggerbuiltinnotify(playerName)
-    local push = fetchpush()
-    if not push then
-        if not nc then coldfetch() end
-        push = nc
-    end
-    if not push then return end
-
-    pendingNames[playerName] = true
-
-    pcall(push, 'Yellow', playerName .. ' has requested assistance! Click to go assist them!', 15, nil, {
-        name = 'ModHelpTeleport',
-        data = {PlayerName = playerName},
-    })
-
-    task.delay(20, function()
-        pendingNames[playerName] = nil
-    end)
-end
-
-local viewingMe = {}
-
-local function isviewingme(arg)
-    if arg == '' then return false end
-
-    local a = arg:lower()
-    local myName = lp.Name:lower()
-    local myDisplay = (lp.DisplayName or ''):lower()
-
-    if myName ~= '' and myName:sub(1, #a) == a then return true end
-    if myDisplay ~= '' and myDisplay:sub(1, #a) == a then return true end
-    if #a <= #myName and myName:find(a, 1, true) == 1 then return true end
-    if myDisplay ~= '' and #a <= #myDisplay and myDisplay:find(a, 1, true) == 1 then return true end
-
-    return false
-end
-
-local function handlmsg(name, text)
-    local lower = text:lower()
-    local firstChar = text:sub(1, 1)
-    local isCmd = firstChar == ':' or firstChar == '!' or firstChar == ';'
-    local cmdName, cmdArgs = '', ''
-
-    if isCmd then
-        local rest = lower:sub(2):gsub('^%s+', '')
-        cmdName = rest:match('^(%a+)') or ''
-
-        if cmdName ~= '' then
-            local afterName = rest:sub(#cmdName + 1)
-            if afterName ~= '' and afterName:sub(1, 1):match('%s') == nil then
-                cmdName = ''
-            else
-                cmdArgs = afterName:gsub('^%s+', ''):gsub('%s+$', '')
-            end
-        end
-    end
-
-    local isCall = cmdName == 'mod' or cmdName == 'help'
-
-    if logChat and not isCmd then
-        notify('Grey', name .. ': ' .. text, 10)
-    end
-
-    if modListen and isCall then
-        triggerbuiltinnotify(name)
-    end
-
-    local suppressGeneric = false
-    if cmdName == 'view' then
-        if isviewingme(cmdArgs) then
-            suppressGeneric = true
-            if not viewingMe[name] then
-                viewingMe[name] = true
-                notify('Red', name .. ' is viewing you!', 8)
-            end
-        elseif viewingMe[name] then
-            viewingMe[name] = nil
-            notify('Red', name .. ' stopped viewing you.', 8)
-        end
-    end
-
-    if cmdNotify and isCmd and not isCall and cmdName ~= '' and not suppressGeneric then
-        notify('Red', name .. ' used: ' .. text, 8)
-    end
-end
-
-if TextChatService.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
-    TextChatService.MessageReceived:Connect(function(msg)
-        if not msg.TextSource then return end
-        if msg.Status == Enum.TextChatMessageStatus.InvalidTextChannelPermissions then return end
-        local p = Players:GetPlayerByUserId(msg.TextSource.UserId)
-        if p then handlmsg(p.Name, msg.Text) end
-    end)
-else
-    local function hook(p)
-        p.Chatted:Connect(function(m)
-            handlmsg(p.Name, m)
         end)
     end
-
-    for _, p in ipairs(Players:GetPlayers()) do
-        hook(p)
-    end
-    Players.PlayerAdded:Connect(hook)
 end
 
-local function onrespawn()
-    nc = nil
-    pendingNames = {}
-    task.spawn(attachcontainer)
-    task.spawn(function()
-        for _ = 1, 60 do
-            if fetchpush() then return end
-            coldfetch()
-            if nc then return end
-            task.wait(0.5)
+local function addadminlog(actor, message)
+    if type(actor) ~= "string" or actor == "" then actor = "Remote Server" end
+    table.insert(_G._adminLogsCache, 1, { actor, message })
+    onentryadded()
+end
+
+pcall(function()
+    local conn
+    local seen = {}
+    local function onreceived(actor, message)
+        local key = actor .. "|" .. message
+        local now = tick()
+        if seen[key] and (now - seen[key]) < 2 then return end
+        seen[key] = now
+        if parsecommandname(message) then
+            addadminlog(actor, message)
         end
-    end)
-end
+    end
 
-lp.CharacterAdded:Connect(function()
-    task.wait(1.5)
-    onrespawn()
+    if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
+        conn = textchatservice.MessageReceived:Connect(function(msg)
+            local text = msg.Text or ""
+            if not parsecommandname(text) then return end
+            local p = msg.TextSource and players:GetPlayerByUserId(msg.TextSource.UserId)
+            if p then
+                onreceived(p.Name, text)
+            else
+                onreceived("Remote Server", text)
+            end
+        end)
+    else
+        local function hook(p)
+            local c = p.Chatted:Connect(function(m)
+                if parsecommandname(m) then addadminlog(p.Name, m) end
+            end)
+            table.insert(_G._adminCommandsLoaded, c)
+        end
+        for _, p in ipairs(players:GetPlayers()) do hook(p) end
+        local c = players.PlayerAdded:Connect(hook)
+        table.insert(_G._adminCommandsLoaded, c)
+    end
+    if conn then table.insert(_G._adminCommandsLoaded, conn) end
 end)
 
-local tab = Tabs.Players
-local sec = tab:Section{
-    Title = 'Fixed Chat Stuff',
-}
+local function onlocalcommand(text)
+    local cmd = parsecommandname(text)
+    if not cmd then return end
 
-sec:Toggle{
-    Title = 'Fake Mod Calls (kinda fixed)',
-    Desc = 'Displays Mod Calls allowing you to teleport to players',
+    local rest = text:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    local argstr = rest:sub(#name + 1):gsub("^%s+", ""):gsub("%s+$", "")
+
+    if cmd == ":killlogs" or cmd == ":kl" then
+        notify("Red", "sorry this doesnt work yet", 5)
+    elseif cmd == ":commands" or cmd == ":cmds" then
+        openadminlist("CommandsList", "Admin Commands", {}, function(c) return c end)
+    elseif cmd == ":logs" then
+        openlogswith(argstr)
+    elseif cmd == ":log" then
+        local playerarg, reason = argstr:match("^(%S+)%s+(.+)$")
+        if not playerarg then
+            openlogswith("")
+            return
+        end
+        if not reason or reason == "" then
+            openlogswith(playerarg)
+            return
+        end
+        local p = resolveplayer(playerarg)
+        local display = p and p.Name or playerarg
+        notify("Green", "Your command is being processed by Melonly", 5)
+        addadminlog(lp.Name, ":log " .. display .. " " .. reason)
+        pcall(function()
+            local fe = replicatedstorage:FindFirstChild("FE")
+            if not fe then return end
+            for _, rn in ipairs({ "LogCommand", "Log", "AdminLog", "AddLog", "LogAction" }) do
+                local r = fe:FindFirstChild(rn)
+                if r and r:IsA("RemoteEvent") then
+                    pcall(function() r:FireServer("log", display, reason) end)
+                    pcall(function() r:FireServer(display, reason) end)
+                    pcall(function() r:FireServer(lp.Name, display, reason) end)
+                end
+            end
+        end)
+    end
+end
+
+local lastseen = {}
+local function handlemessage(text)
+    if not enabled then return end
+    local now = tick()
+    local prev = lastseen[text]
+    if prev and (now - prev) < 1.5 then return end
+    lastseen[text] = now
+    onlocalcommand(text)
+end
+
+pcall(function()
+    if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
+        local c = textchatservice.MessageReceived:Connect(function(msg)
+            if msg.TextSource and msg.TextSource.UserId == lp.UserId then
+                handlemessage(msg.Text)
+            end
+        end)
+        table.insert(_G._adminCommandsLoaded, c)
+    end
+    local c2 = lp.Chatted:Connect(handlemessage)
+    table.insert(_G._adminCommandsLoaded, c2)
+end)
+
+local tab = tabs.Players
+
+local sec = tab:Section({ Title = "extra commands" })
+pcall(function() sec:Open() end)
+
+sec:Toggle({
+    Title = "more chat commands",
+    Desc  = "adds :cmds / :logs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
     Value = true,
-    Callback = function(s) modListen = s end,
-}
-
-sec:Toggle{
-    Title = 'Admin Command Notifier (FIXED)',
-    Desc = 'Shows alerts for admin commands',
-    Value = false,
-    Callback = function(s) cmdNotify = s end,
-}
-
-sec:Toggle{
-    Title = 'Chat Spy (FIXED)',
-    Desc = 'Shows all chat messages',
-    Value = false,
-    Callback = function(s) logChat = s end,
-}
+    Callback = function(s) enabled = s end,
+})
