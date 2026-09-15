@@ -11,6 +11,8 @@ local enabled = true
 _G._adminLogsCache = _G._adminLogsCache or {}
 local notifycallback = nil
 local notifyready = false
+local lastmsg = ""
+local lasttime = 0
 
 local function fetchnotifycallback()
     local list
@@ -74,22 +76,32 @@ local function resolveplayer(prefix)
     return nil
 end
 
-local function extracttarget(message)
+local function extractparts(message)
     local rest = message:sub(2):gsub("^%s+", "")
     local name = rest:match("^(%a+)") or ""
-    if name == "" then return "" end
+    if name == "" then return "", "", "" end
+    local cmd = ":" .. name:lower()
     local after = rest:sub(#name + 1):gsub("^%s+", "")
-    if after == "" then return "" end
-    local firstarg = after:match("^(%S+)") or ""
-    if firstarg == "" then return "" end
-    local p = resolveplayer(firstarg)
-    if p then return p.Name end
-    return ""
+    local target = ""
+    local reason = ""
+    if after ~= "" then
+        local firstarg, remainder = after:match("^(%S+)%s*(.*)$")
+        if firstarg then
+            local p = resolveplayer(firstarg)
+            if p then
+                target = p.Name
+                if name:lower() == "log" and remainder and remainder ~= "" then
+                    reason = remainder:gsub("^%s+", ""):gsub("%s+$", "")
+                end
+            end
+        end
+    end
+    return cmd, target, reason
 end
 
 local function addadminlog(actor, message)
-    local target = extracttarget(message)
-    table.insert(_G._adminLogsCache, 1, { actor, message, target, os.time() })
+    local cmd, target, reason = extractparts(message)
+    table.insert(_G._adminLogsCache, 1, { actor, cmd, target, reason, os.time() })
 end
 
 pcall(function()
@@ -193,12 +205,14 @@ end
 
 local function loglabel(e)
     local actor = tostring(e[1] or "?")
-    local msg = tostring(e[2] or "")
+    local cmd = tostring(e[2] or "")
     local target = tostring(e[3] or "")
-    if target ~= "" then
-        return actor .. " --> " .. msg .. " --> " .. target
-    end
-    return actor .. " --> " .. msg
+    local reason = tostring(e[4] or "")
+    local parts = { actor }
+    if cmd ~= "" then table.insert(parts, cmd) end
+    if target ~= "" then table.insert(parts, target) end
+    if reason ~= "" then table.insert(parts, reason) end
+    return table.concat(parts, " --> ")
 end
 
 local function openlogswith(filter)
@@ -216,10 +230,10 @@ local function openlogswith(filter)
         end
         items = filtered
         if #items == 0 then
-            items = { { "no matches", "no logs matching '" .. filter .. "'", "", os.time() } }
+            items = { { "no matches", "no logs matching '" .. filter .. "'", "", "", os.time() } }
         end
     elseif #items == 0 then
-        items = { { "no commands yet", "waiting for a command", "", os.time() } }
+        items = { { "no commands yet", "waiting for a command", "", "", os.time() } }
     end
     openadminlist("LogsList", "Command Logs", items, loglabel)
 end
@@ -250,11 +264,12 @@ local function onlocalcommand(text)
         end
         local p = resolveplayer(playerarg)
         local display = p and p.Name or playerarg
-        notify("Green", "Logged " .. display .. " for " .. reason .. " successfully.", 5)
+        notify("Green", "Attempted to log " .. display .. " for " .. reason .. ".", 5)
         table.insert(_G._adminLogsCache, 1, {
             lp.Name,
-            ":log " .. display .. " " .. reason,
+            ":log",
             display,
+            reason,
             os.time(),
         })
         pcall(function()
@@ -274,6 +289,10 @@ end
 
 local function handlemessage(text)
     if not enabled then return end
+    local now = tick()
+    if text == lastmsg and (now - lasttime) < 1 then return end
+    lastmsg = text
+    lasttime = now
     onlocalcommand(text)
 end
 
