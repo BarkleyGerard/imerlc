@@ -14,6 +14,7 @@ local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
+local workspace = game:GetService("Workspace")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -24,7 +25,8 @@ local notifyready = false
 local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
-local reanchoring = false
+local camerawired = false
+local wasonother = false
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
@@ -115,29 +117,6 @@ local function resolveplayer(prefix)
     end
     return nil
 end
-
-local function watchrootpart()
-    local function onchar(char)
-        local root = char:WaitForChild("HumanoidRootPart", 5)
-        if not root then return end
-        root:GetPropertyChangedSignal("Anchored"):Connect(function()
-            if reanchoring then return end
-            if root.Anchored == false then
-                reanchoring = true
-                root.Anchored = true
-                task.delay(1.8, function()
-                    reanchoring = false
-                    if root and root.Parent then
-                        root.Anchored = false
-                    end
-                end)
-            end
-        end)
-    end
-    if lp.Character then onchar(lp.Character) end
-    lp.CharacterAdded:Connect(onchar)
-end
-watchrootpart()
 
 function getadmin()
     local pg = lp:FindFirstChild("PlayerGui")
@@ -233,14 +212,16 @@ local function wirecommandhover(clone)
     end)
 end
 
+local PRIVATE_NOTE = " <b>Only works for private servers.</b>"
+
 local customcommands = {
-    { cmd = ":track",    args = { "[Player]" },            desc = "Continuously tracks a specified player.", aliases = {} },
+    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
     { cmd = ":load",     args = {},                        desc = "Loads the current vehicle.", aliases = {} },
     { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
     { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
-    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail. <b>Only works for private servers.</b>", aliases = {} },
-    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level. <b>Only works for private servers.</b>", aliases = {} },
-    { cmd = ":resetdata",args = {},                        desc = "Resets your session data. <b>Only works for private servers.</b>", aliases = {} },
+    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail." .. PRIVATE_NOTE, aliases = {} },
+    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level." .. PRIVATE_NOTE, aliases = {} },
+    { cmd = ":resetdata",args = {},                        desc = "Resets your session data." .. PRIVATE_NOTE, aliases = {} },
     { cmd = ":killlogs", args = {},                        desc = "Shows kill logs (work in progress).", aliases = { "kl" } },
     { cmd = ":logs",     args = { "[Player]" },            desc = "Shows command logs, filtered to a player.", aliases = {} },
     { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
@@ -471,6 +452,48 @@ pcall(function()
     end
     if conn then table.insert(_G._adminCommandsLoaded, conn) end
 end)
+
+local function subjectisother(subj)
+    if not subj then return false end
+    for _, p in ipairs(players:GetPlayers()) do
+        if p ~= lp and p.Character and subj:IsDescendantOf(p.Character) then
+            return true
+        end
+    end
+    return false
+end
+
+local function anchorroot()
+    task.spawn(function()
+        local char = lp.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        root.Anchored = true
+        task.wait(1.8)
+        if root and root.Parent then
+            root.Anchored = false
+        end
+    end)
+end
+
+local function wirecamera()
+    if camerawired then return end
+    camerawired = true
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    wasonother = subjectisother(cam.CameraSubject)
+
+    cam:GetPropertyChangedSignal("CameraSubject"):Connect(function()
+        local nowother = subjectisother(cam.CameraSubject)
+        if wasonother and not nowother then
+            anchorroot()
+        end
+        wasonother = nowother
+    end)
+end
+
+wirecamera()
 
 local function onlocalcommand(text)
     local cmd = parsecommandname(text)
