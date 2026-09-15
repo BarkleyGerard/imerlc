@@ -131,7 +131,7 @@ local function handlmsg(name, text)
     local isCall = cmdName == 'mod' or cmdName == 'help'
 
     if logChat and not isCmd then
-        notify('Grey', '[' .. name .. '] ' .. text, 10)
+        notify('Grey', name .. ': ' .. text, 10)
     end
 
     if modListen and isCall then
