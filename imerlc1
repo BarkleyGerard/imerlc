@@ -24,6 +24,7 @@ local notifyready = false
 local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
+local reanchoring = false
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
@@ -114,6 +115,29 @@ local function resolveplayer(prefix)
     end
     return nil
 end
+
+local function watchrootpart()
+    local function onchar(char)
+        local root = char:WaitForChild("HumanoidRootPart", 5)
+        if not root then return end
+        root:GetPropertyChangedSignal("Anchored"):Connect(function()
+            if reanchoring then return end
+            if root.Anchored == false then
+                reanchoring = true
+                root.Anchored = true
+                task.delay(1.8, function()
+                    reanchoring = false
+                    if root and root.Parent then
+                        root.Anchored = false
+                    end
+                end)
+            end
+        end)
+    end
+    if lp.Character then onchar(lp.Character) end
+    lp.CharacterAdded:Connect(onchar)
+end
+watchrootpart()
 
 function getadmin()
     local pg = lp:FindFirstChild("PlayerGui")
@@ -210,13 +234,13 @@ local function wirecommandhover(clone)
 end
 
 local customcommands = {
-    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
+    { cmd = ":track",    args = { "[Player]" },            desc = "Continuously tracks a specified player.", aliases = {} },
     { cmd = ":load",     args = {},                        desc = "Loads the current vehicle.", aliases = {} },
     { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
     { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
-    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail.", aliases = {} },
-    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level.", aliases = {} },
-    { cmd = ":resetdata",args = {},                        desc = "Resets your session data.", aliases = {} },
+    { cmd = ":unjail",   args = {},                        desc = "Frees you from jail. <b>Only works for private servers.</b>", aliases = {} },
+    { cmd = ":unwanted", args = {},                        desc = "Clears your wanted level. <b>Only works for private servers.</b>", aliases = {} },
+    { cmd = ":resetdata",args = {},                        desc = "Resets your session data. <b>Only works for private servers.</b>", aliases = {} },
     { cmd = ":killlogs", args = {},                        desc = "Shows kill logs (work in progress).", aliases = { "kl" } },
     { cmd = ":logs",     args = { "[Player]" },            desc = "Shows command logs, filtered to a player.", aliases = {} },
     { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
@@ -474,7 +498,7 @@ local function onlocalcommand(text)
         end
         local p = resolveplayer(playerarg)
         local display = p and p.Name or playerarg
-        notify("Green", "Attempted to log " .. display .. " for " .. reason .. ".", 5)
+        notify("Green", "You're command is being processed by Melonly", 5)
         pcall(function()
             local fe = replicatedstorage:FindFirstChild("FE")
             if not fe then return end
