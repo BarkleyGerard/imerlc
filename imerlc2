@@ -24,7 +24,7 @@ end
 
 task.spawn(function()
     task.wait(2 + math.random() * 3)
-    pcall(fetchnc())
+    pcall(fetchnc)
 end)
 
 local function notify(color, text, duration)
@@ -32,7 +32,7 @@ local function notify(color, text, duration)
     pcall(nc, color, text, duration or 5, nil, nil, nil)
 end
 
-local pendingById, idCounter = {}, 0
+local pendingNames = {}
 
 local function getnotifcontainer()
     local pg = lp:FindFirstChild('PlayerGui')
@@ -51,7 +51,14 @@ local function triggerclickhint(playerName)
     notify('Yellow', [[so i kinda dont know how erx detects chat commands so just open chat and do ctrl v and enter sorry]], 20)
 end
 
-task.spawn(function()
+local containerConn
+
+local function attachcontainer()
+    if containerConn then
+        containerConn:Disconnect()
+        containerConn = nil
+    end
+
     local container
     for _ = 1, 30 do
         container = getnotifcontainer()
@@ -60,34 +67,54 @@ task.spawn(function()
     end
     if not container then return end
 
-    container.ChildAdded:Connect(function(child)
-        local playerName = pendingById[child.Name]
-        if not playerName then return end
-        pendingById[child.Name] = nil
+    containerConn = container.ChildAdded:Connect(function(child)
+        if not next(pendingNames) then return end
 
-        local btn = child.MouseButton1Down and child or child:FindFirstChildWhichIsA('TextButton', true)
-        if btn and btn.MouseButton1Down then
-            btn.MouseButton1Down:Connect(function()
-                triggerclickhint(playerName)
+        local function match()
+            for _, d in ipairs(child:GetDescendants()) do
+                if d:IsA('TextLabel') and d.Text and d.Text ~= '' then
+                    for name in pairs(pendingNames) do
+                        if d.Text:find(name, 1, true) then
+                            pendingNames[name] = nil
+                            local btn = child:IsA('GuiButton') and child or child:FindFirstChildWhichIsA('TextButton', true)
+                            if btn and btn.MouseButton1Down then
+                                btn.MouseButton1Down:Connect(function()
+                                    triggerclickhint(name)
+                                end)
+                            end
+                            return true
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
+        if not match() then
+            local conn
+            conn = child.DescendantAdded:Connect(function()
+                if match() and conn then
+                    conn:Disconnect()
+                end
             end)
         end
     end)
-end)
+end
+
+task.spawn(attachcontainer)
 
 local function triggerbuiltinnotify(playerName)
     if not nc then return end
 
-    idCounter = idCounter + 1
-    local notifId = 'MCL_ModHelp_' .. idCounter
-    pendingById[notifId] = playerName
+    pendingNames[playerName] = true
 
     pcall(nc, 'Yellow', playerName .. ' has requested assistance! Click to go assist them!', 15, nil, {
         name = 'ModHelpTeleport',
         data = {PlayerName = playerName},
-    }, notifId)
+    })
 
     task.delay(16, function()
-        pendingById[notifId] = nil
+        pendingNames[playerName] = nil
     end)
 end
 
@@ -131,7 +158,7 @@ local function handlmsg(name, text)
     local isCall = cmdName == 'mod' or cmdName == 'help'
 
     if logChat and not isCmd then
-        notify('Grey', '[' .. name .. '] ' .. text, 10)
+        notify('Grey', name .. ': ' .. text, 10)
     end
 
     if modListen and isCall then
@@ -176,6 +203,11 @@ else
     end
     Players.PlayerAdded:Connect(hook)
 end
+
+lp.CharacterAdded:Connect(function()
+    task.wait(1)
+    task.spawn(attachcontainer)
+end)
 
 local tab = Tabs.Players
 local sec = tab:Section{
