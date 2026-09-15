@@ -63,8 +63,33 @@ local function parsecommand(text)
     return name:lower()
 end
 
+local function resolveplayer(prefix)
+    if not prefix or prefix == "" then return nil end
+    local pfx = prefix:lower()
+    for _, p in ipairs(players:GetPlayers()) do
+        if p.Name:lower():sub(1, #pfx) == pfx then return p end
+        local dn = p.DisplayName or ""
+        if dn:lower():sub(1, #pfx) == pfx then return p end
+    end
+    return nil
+end
+
+local function extracttarget(message)
+    local rest = message:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    if name == "" then return "" end
+    local after = rest:sub(#name + 1):gsub("^%s+", "")
+    if after == "" then return "" end
+    local firstarg = after:match("^(%S+)") or ""
+    if firstarg == "" then return "" end
+    local p = resolveplayer(firstarg)
+    if p then return p.Name end
+    return ""
+end
+
 local function addadminlog(actor, message)
-    table.insert(_G._adminLogsCache, 1, { actor, message, os.time() })
+    local target = extracttarget(message)
+    table.insert(_G._adminLogsCache, 1, { actor, message, target, os.time() })
 end
 
 pcall(function()
@@ -97,7 +122,8 @@ local commands = {
     ":unwanted",
     ":resetdata",
     ":killlogs (coming soon maybe)",
-    ":logs",
+    ":logs [Player]",
+    ":log [Player] [Reason]",
     ":commands",
     ":view",
 }
@@ -165,21 +191,84 @@ local function openadminlist(listname, titletext, items, labelfactory)
     ):Play()
 end
 
+local function loglabel(e)
+    local actor = tostring(e[1] or "?")
+    local msg = tostring(e[2] or "")
+    local target = tostring(e[3] or "")
+    if target ~= "" then
+        return actor .. " --> " .. msg .. " --> " .. target
+    end
+    return actor .. " --> " .. msg
+end
+
+local function openlogswith(filter)
+    local items = _G._adminLogsCache
+    if filter and filter ~= "" then
+        local pfx = filter:lower()
+        local filtered = {}
+        for _, e in ipairs(items) do
+            local actor = tostring(e[1] or ""):lower()
+            local target = tostring(e[3] or ""):lower()
+            if actor:sub(1, #pfx) == pfx
+                or (target ~= "" and target:sub(1, #pfx) == pfx) then
+                table.insert(filtered, e)
+            end
+        end
+        items = filtered
+        if #items == 0 then
+            items = { { "no matches", "no logs matching '" .. filter .. "'", "", os.time() } }
+        end
+    elseif #items == 0 then
+        items = { { "no commands yet", "waiting for a command", "", os.time() } }
+    end
+    openadminlist("LogsList", "Command Logs", items, loglabel)
+end
+
 local function onlocalcommand(text)
     local cmd = parsecommand(text)
     if not cmd then return end
+
+    local rest = text:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    local argstr = rest:sub(#name + 1):gsub("^%s+", ""):gsub("%s+$", "")
 
     if cmd == "killlogs" or cmd == "kl" then
         notify("Red", "sorry this doesnt work yet", 5)
     elseif cmd == "commands" or cmd == "cmds" then
         openadminlist("CommandsList", "Admin Commands", commands, function(c) return c end)
     elseif cmd == "logs" then
-        local items = _G._adminLogsCache
-        if #items == 0 then
-            items = { { "no commands yet", "waiting for a command", os.time() } }
+        openlogswith(argstr)
+    elseif cmd == "log" then
+        local playerarg, reason = argstr:match("^(%S+)%s+(.+)$")
+        if not playerarg then
+            openlogswith("")
+            return
         end
-        openadminlist("LogsList", "Command Logs", items,
-            function(e) return tostring(e[1]) .. " - " .. tostring(e[2]) end)
+        if not reason or reason == "" then
+            openlogswith(playerarg)
+            return
+        end
+        local p = resolveplayer(playerarg)
+        local display = p and p.Name or playerarg
+        notify("Green", "Logged " .. display .. " for " .. reason .. " successfully.", 5)
+        table.insert(_G._adminLogsCache, 1, {
+            lp.Name,
+            ":log " .. display .. " " .. reason,
+            display,
+            os.time(),
+        })
+        pcall(function()
+            local fe = replicatedstorage:FindFirstChild("FE")
+            if not fe then return end
+            for _, rn in ipairs({ "LogCommand", "Log", "AdminLog", "AddLog", "LogAction" }) do
+                local r = fe:FindFirstChild(rn)
+                if r and r:IsA("RemoteEvent") then
+                    pcall(function() r:FireServer("log", display, reason) end)
+                    pcall(function() r:FireServer(display, reason) end)
+                    pcall(function() r:FireServer(lp.Name, display, reason) end)
+                end
+            end
+        end)
     end
 end
 
@@ -209,7 +298,7 @@ pcall(function() sec:Open() end)
 
 sec:Toggle({
     Title = "more chat commands",
-    Desc  = "adds :cmds/commands and :logs and killlogs (coming soon maybe)",
+    Desc  = "adds :cmds / :logs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
     Value = true,
     Callback = function(s) enabled = s end,
 })
