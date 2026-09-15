@@ -44,7 +44,7 @@ local function getnotifcontainer()
     return bl:FindFirstChild('Notifications')
 end
 
-local function clickerx(playerName)
+local function triggerclickhint(playerName)
     if setclipboard then
         setclipboard(':to ' .. playerName)
     end
@@ -68,13 +68,13 @@ task.spawn(function()
         local btn = child.MouseButton1Down and child or child:FindFirstChildWhichIsA('TextButton', true)
         if btn and btn.MouseButton1Down then
             btn.MouseButton1Down:Connect(function()
-                clickerx(playerName)
+                triggerclickhint(playerName)
             end)
         end
     end)
 end)
 
-local function veritynoti(playerName)
+local function triggerbuiltinnotify(playerName)
     if not nc then return end
 
     idCounter = idCounter + 1
@@ -131,11 +131,11 @@ local function handlmsg(name, text)
     local isCall = cmdName == 'mod' or cmdName == 'help'
 
     if logChat and not isCmd then
-        notify('Grey', name .. ': ' .. text, 10)
+        notify('Grey', '[' .. name .. '] ' .. text, 10)
     end
 
     if modListen and isCall then
-        veritynoti(name)
+        triggerbuiltinnotify(name)
     end
 
     local suppressGeneric = false
