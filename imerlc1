@@ -1,5 +1,12 @@
 repeat task.wait() until _G.WindUI and _G.Functions
 
+if _G._adminCommandsLoaded then
+    for _, c in ipairs(_G._adminCommandsLoaded) do
+        pcall(function() c:Disconnect() end)
+    end
+end
+_G._adminCommandsLoaded = {}
+
 local windui = _G.WindUI
 local tabs = _G.Tabs
 local players = game:GetService("Players")
@@ -8,11 +15,12 @@ local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lp = players.LocalPlayer
 local enabled = true
-_G._adminLogsCache = _G._adminLogsCache or {}
+
+_G._adminLogsCache = {}
+
 local notifycallback = nil
 local notifyready = false
-local lastmsg = ""
-local lasttime = 0
+local currentlistname = nil
 
 local function fetchnotifycallback()
     local list
@@ -54,7 +62,7 @@ local function notify(color, text, duration)
     end
 end
 
-local function parsecommand(text)
+local function parsecommandname(text)
     local fc = text:sub(1, 1)
     if fc ~= ":" and fc ~= "!" and fc ~= ";" then return nil end
     local rest = text:sub(2):gsub("^%s+", "")
@@ -62,7 +70,7 @@ local function parsecommand(text)
     if name == "" then return nil end
     local after = rest:sub(#name + 1)
     if after ~= "" and after:sub(1, 1):match("%s") == nil then return nil end
-    return name:lower()
+    return ":" .. name:lower()
 end
 
 local function resolveplayer(prefix)
@@ -77,10 +85,10 @@ local function resolveplayer(prefix)
 end
 
 local function extractparts(message)
+    local cmd = parsecommandname(message)
+    if not cmd then return nil end
     local rest = message:sub(2):gsub("^%s+", "")
     local name = rest:match("^(%a+)") or ""
-    if name == "" then return "", "", "" end
-    local cmd = ":" .. name:lower()
     local after = rest:sub(#name + 1):gsub("^%s+", "")
     local target = ""
     local reason = ""
@@ -99,30 +107,87 @@ local function extractparts(message)
     return cmd, target, reason
 end
 
+local function onentryadded()
+    if currentlistname == "LogsList" then
+        task.spawn(function()
+            pcall(function()
+                local items = _G._adminLogsCache
+                if #items == 0 then
+                    items = { { "no commands yet", "", "", "", 0 } }
+                end
+                local function loglabel(e)
+                    local actor = tostring(e[1] or "?")
+                    local cmd = tostring(e[2] or "")
+                    local tgt = tostring(e[3] or "")
+                    local rsn = tostring(e[4] or "")
+                    local parts = { actor }
+                    if cmd ~= "" then table.insert(parts, cmd) end
+                    if tgt ~= "" then table.insert(parts, tgt) end
+                    if rsn ~= "" then table.insert(parts, rsn) end
+                    return table.concat(parts, " --> ")
+                end
+                local gm, admin = getadmin()
+                if not admin then return end
+                local list = admin:FindFirstChild("LogsList")
+                if not list or not list.Visible then return end
+                local adminls = admin:FindFirstChild("Admin LS")
+                local template = adminls and (adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem"))
+                if not template then return end
+                for _, child in ipairs(list:GetChildren()) do
+                    if child:IsA("TextLabel") then child:Destroy() end
+                end
+                for i, item in ipairs(items) do
+                    local clone = template:Clone()
+                    clone.Name = "Item" .. i
+                    clone.Text = loglabel(item)
+                    clone.LayoutOrder = i
+                    clone.Parent = list
+                end
+                local layout = list:FindFirstChildOfClass("UIListLayout")
+                if layout then
+                    list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+                end
+            end)
+        end)
+    end
+end
+
 local function addadminlog(actor, message)
     local cmd, target, reason = extractparts(message)
+    if not cmd then return end
+    if type(actor) ~= "string" or actor == "" then return end
     table.insert(_G._adminLogsCache, 1, { actor, cmd, target, reason, os.time() })
+    onentryadded()
 end
 
 pcall(function()
+    local conn
+    local seen = {}
+    local function onreceived(actor, message)
+        local key = actor .. "|" .. message
+        local now = tick()
+        if seen[key] and (now - seen[key]) < 2 then return end
+        seen[key] = now
+        addadminlog(actor, message)
+    end
+
     if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
-        textchatservice.MessageReceived:Connect(function(msg)
+        conn = textchatservice.MessageReceived:Connect(function(msg)
             if msg.TextSource then
                 local p = players:GetPlayerByUserId(msg.TextSource.UserId)
-                if p and parsecommand(msg.Text) then
-                    addadminlog(p.Name, msg.Text)
-                end
+                if p then onreceived(p.Name, msg.Text) end
             end
         end)
     else
         local function hook(p)
-            p.Chatted:Connect(function(m)
-                if parsecommand(m) then addadminlog(p.Name, m) end
-            end)
+            local c = p.Chatted:Connect(function(m) onreceived(p.Name, m) end)
+            table.insert(_G._adminCommandsLoaded, c)
         end
         for _, p in ipairs(players:GetPlayers()) do hook(p) end
-        players.PlayerAdded:Connect(hook)
+        local c = players.PlayerAdded:Connect(hook)
+        table.insert(_G._adminCommandsLoaded, c)
     end
+    if conn then table.insert(_G._adminCommandsLoaded, conn) end
 end)
 
 local commands = {
@@ -140,7 +205,7 @@ local commands = {
     ":view",
 }
 
-local function getadmin()
+function getadmin()
     local pg = lp:FindFirstChild("PlayerGui")
     if not pg then return nil, nil end
     local gm = pg:FindFirstChild("GameMenus") or pg:WaitForChild("GameMenus", 10)
@@ -185,6 +250,8 @@ local function renderlist(listname, titletext, items, labelfactory)
     if layout then
         list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
     end
+
+    currentlistname = listname
 end
 
 local function openadminlist(listname, titletext, items, labelfactory)
@@ -206,12 +273,12 @@ end
 local function loglabel(e)
     local actor = tostring(e[1] or "?")
     local cmd = tostring(e[2] or "")
-    local target = tostring(e[3] or "")
-    local reason = tostring(e[4] or "")
+    local tgt = tostring(e[3] or "")
+    local rsn = tostring(e[4] or "")
     local parts = { actor }
     if cmd ~= "" then table.insert(parts, cmd) end
-    if target ~= "" then table.insert(parts, target) end
-    if reason ~= "" then table.insert(parts, reason) end
+    if tgt ~= "" then table.insert(parts, tgt) end
+    if rsn ~= "" then table.insert(parts, rsn) end
     return table.concat(parts, " --> ")
 end
 
@@ -222,37 +289,37 @@ local function openlogswith(filter)
         local filtered = {}
         for _, e in ipairs(items) do
             local actor = tostring(e[1] or ""):lower()
-            local target = tostring(e[3] or ""):lower()
+            local tgt = tostring(e[3] or ""):lower()
             if actor:sub(1, #pfx) == pfx
-                or (target ~= "" and target:sub(1, #pfx) == pfx) then
+                or (tgt ~= "" and tgt:sub(1, #pfx) == pfx) then
                 table.insert(filtered, e)
             end
         end
         items = filtered
         if #items == 0 then
-            items = { { "no matches", "no logs matching '" .. filter .. "'", "", "", os.time() } }
+            items = { { "no matches", "", "", "", 0 } }
         end
     elseif #items == 0 then
-        items = { { "no commands yet", "waiting for a command", "", "", os.time() } }
+        items = { { "no commands yet", "", "", "", 0 } }
     end
     openadminlist("LogsList", "Command Logs", items, loglabel)
 end
 
 local function onlocalcommand(text)
-    local cmd = parsecommand(text)
+    local cmd = parsecommandname(text)
     if not cmd then return end
 
     local rest = text:sub(2):gsub("^%s+", "")
     local name = rest:match("^(%a+)") or ""
     local argstr = rest:sub(#name + 1):gsub("^%s+", ""):gsub("%s+$", "")
 
-    if cmd == "killlogs" or cmd == "kl" then
+    if cmd == ":killlogs" or cmd == ":kl" then
         notify("Red", "sorry this doesnt work yet", 5)
-    elseif cmd == "commands" or cmd == "cmds" then
+    elseif cmd == ":commands" or cmd == ":cmds" then
         openadminlist("CommandsList", "Admin Commands", commands, function(c) return c end)
-    elseif cmd == "logs" then
+    elseif cmd == ":logs" then
         openlogswith(argstr)
-    elseif cmd == "log" then
+    elseif cmd == ":log" then
         local playerarg, reason = argstr:match("^(%S+)%s+(.+)$")
         if not playerarg then
             openlogswith("")
@@ -265,13 +332,6 @@ local function onlocalcommand(text)
         local p = resolveplayer(playerarg)
         local display = p and p.Name or playerarg
         notify("Green", "Attempted to log " .. display .. " for " .. reason .. ".", 5)
-        table.insert(_G._adminLogsCache, 1, {
-            lp.Name,
-            ":log",
-            display,
-            reason,
-            os.time(),
-        })
         pcall(function()
             local fe = replicatedstorage:FindFirstChild("FE")
             if not fe then return end
@@ -289,25 +349,20 @@ end
 
 local function handlemessage(text)
     if not enabled then return end
-    local now = tick()
-    if text == lastmsg and (now - lasttime) < 1 then return end
-    lastmsg = text
-    lasttime = now
     onlocalcommand(text)
 end
 
 pcall(function()
     if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
-        textchatservice.MessageReceived:Connect(function(msg)
+        local c = textchatservice.MessageReceived:Connect(function(msg)
             if msg.TextSource and msg.TextSource.UserId == lp.UserId then
                 handlemessage(msg.Text)
             end
         end)
+        table.insert(_G._adminCommandsLoaded, c)
     end
-end)
-
-pcall(function()
-    lp.Chatted:Connect(handlemessage)
+    local c2 = lp.Chatted:Connect(handlemessage)
+    table.insert(_G._adminCommandsLoaded, c2)
 end)
 
 local tab = tabs.Players
