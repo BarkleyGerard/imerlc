@@ -21,6 +21,7 @@ _G._adminLogsCache = {}
 local notifycallback = nil
 local notifyready = false
 local currentlistname = nil
+local searchwired = false
 
 local function fetchnotifycallback()
     local list
@@ -107,6 +108,161 @@ local function extractparts(message)
     return cmd, target, reason
 end
 
+local function loglabel(e)
+    local actor = tostring(e[1] or "?")
+    local cmd = tostring(e[2] or "")
+    local tgt = tostring(e[3] or "")
+    local rsn = tostring(e[4] or "")
+    local parts = { actor }
+    if cmd ~= "" then table.insert(parts, cmd) end
+    if tgt ~= "" then table.insert(parts, tgt) end
+    if rsn ~= "" then table.insert(parts, rsn) end
+    return table.concat(parts, " --> ")
+end
+
+function getadmin()
+    local pg = lp:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local gm = pg:FindFirstChild("GameMenus") or pg:WaitForChild("GameMenus", 10)
+    if not gm then return nil, nil end
+    local admin = gm:FindFirstChild("Admin") or gm:WaitForChild("Admin", 5)
+    return gm, admin
+end
+
+local function wirehover(clone, admin)
+    local hovertext = admin:FindFirstChild("HoverText")
+    if not hovertext then return end
+    clone.MouseEnter:Connect(function()
+        if clone.TextFits then
+            hovertext.Visible = false
+            return
+        end
+        hovertext.Text = clone.Text
+        hovertext.Visible = true
+    end)
+    clone.MouseLeave:Connect(function()
+        hovertext.Visible = false
+    end)
+end
+
+local function wiresearch(admin)
+    if searchwired then return end
+    local search = admin:FindFirstChild("Search")
+    if not search or not search:IsA("TextBox") then return end
+    searchwired = true
+    search.FocusLost:Connect(function()
+        local needle = search.Text or ""
+        for _, frame in ipairs(admin:GetChildren()) do
+            if frame:IsA("ScrollingFrame") and frame.Visible then
+                if needle == "" then
+                    for _, lbl in ipairs(frame:GetChildren()) do
+                        if lbl:IsA("TextLabel") then lbl.Visible = true end
+                    end
+                    return
+                end
+                for _, lbl in ipairs(frame:GetChildren()) do
+                    if lbl:IsA("TextLabel") then
+                        if string.find(lbl.Text:lower(), needle:lower(), 1, true) then
+                            lbl.Visible = true
+                        else
+                            lbl.Visible = false
+                        end
+                    end
+                end
+                return
+            end
+        end
+    end)
+end
+
+local function renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not gm or not admin then return end
+    local adminls = admin:FindFirstChild("Admin LS")
+    if not adminls then return end
+    local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
+    if not template then return end
+    local list = admin:FindFirstChild(listname)
+    if not list then return end
+
+    for _, child in ipairs(admin:GetChildren()) do
+        if child:IsA("ScrollingFrame") then child.Visible = false end
+    end
+    for _, child in ipairs(list:GetChildren()) do
+        if child:IsA("TextLabel") then child:Destroy() end
+    end
+
+    local titlebar = admin:FindFirstChild("TitleBar")
+    if titlebar and titlebar:FindFirstChild("Title") then
+        titlebar.Title.Text = titletext
+    end
+
+    local search = admin:FindFirstChild("Search")
+    if search then
+        search.Visible = (listname == "LogsList")
+        if search:IsA("TextBox") then search.Text = "" end
+    end
+
+    for i, item in ipairs(items) do
+        local clone = template:Clone()
+        clone.Name = "Item" .. i
+        clone.Text = labelfactory(item)
+        clone.LayoutOrder = i
+        clone.Parent = list
+        pcall(function() clone.TextScaled = false end)
+        wirehover(clone, admin)
+    end
+
+    list.Visible = true
+
+    local layout = list:FindFirstChildOfClass("UIListLayout")
+    if layout then
+        list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+    end
+
+    wiresearch(admin)
+    currentlistname = listname
+end
+
+local function openadminlist(listname, titletext, items, labelfactory)
+    renderlist(listname, titletext, items, labelfactory)
+    local gm, admin = getadmin()
+    if not admin then return end
+    gm.Enabled = true
+    admin.Position = UDim2.new(0.5, 0, 1.5, 0)
+    admin.Visible = true
+    _G.InMenu = admin
+    _G.InMenuType = "Small"
+    tween:Create(
+        admin,
+        TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        { Position = UDim2.new(0.5, 0, 0.5, 0) }
+    ):Play()
+end
+
+local function openlogswith(filter)
+    local items = _G._adminLogsCache
+    if filter and filter ~= "" then
+        local pfx = filter:lower()
+        local filtered = {}
+        for _, e in ipairs(items) do
+            local actor = tostring(e[1] or ""):lower()
+            local tgt = tostring(e[3] or ""):lower()
+            if actor:sub(1, #pfx) == pfx
+                or (tgt ~= "" and tgt:sub(1, #pfx) == pfx) then
+                table.insert(filtered, e)
+            end
+        end
+        items = filtered
+        if #items == 0 then
+            items = { { "no matches", "", "", "", 0 } }
+        end
+    elseif #items == 0 then
+        items = { { "no commands yet", "", "", "", 0 } }
+    end
+    openadminlist("LogsList", "Command Logs", items, loglabel)
+end
+
 local function onentryadded()
     if currentlistname == "LogsList" then
         task.spawn(function()
@@ -114,17 +270,6 @@ local function onentryadded()
                 local items = _G._adminLogsCache
                 if #items == 0 then
                     items = { { "no commands yet", "", "", "", 0 } }
-                end
-                local function loglabel(e)
-                    local actor = tostring(e[1] or "?")
-                    local cmd = tostring(e[2] or "")
-                    local tgt = tostring(e[3] or "")
-                    local rsn = tostring(e[4] or "")
-                    local parts = { actor }
-                    if cmd ~= "" then table.insert(parts, cmd) end
-                    if tgt ~= "" then table.insert(parts, tgt) end
-                    if rsn ~= "" then table.insert(parts, rsn) end
-                    return table.concat(parts, " --> ")
                 end
                 local gm, admin = getadmin()
                 if not admin then return end
@@ -142,6 +287,8 @@ local function onentryadded()
                     clone.Text = loglabel(item)
                     clone.LayoutOrder = i
                     clone.Parent = list
+                    pcall(function() clone.TextScaled = false end)
+                    wirehover(clone, admin)
                 end
                 local layout = list:FindFirstChildOfClass("UIListLayout")
                 if layout then
@@ -204,106 +351,6 @@ local commands = {
     ":commands",
     ":view",
 }
-
-function getadmin()
-    local pg = lp:FindFirstChild("PlayerGui")
-    if not pg then return nil, nil end
-    local gm = pg:FindFirstChild("GameMenus") or pg:WaitForChild("GameMenus", 10)
-    if not gm then return nil, nil end
-    local admin = gm:FindFirstChild("Admin") or gm:WaitForChild("Admin", 5)
-    return gm, admin
-end
-
-local function renderlist(listname, titletext, items, labelfactory)
-    local gm, admin = getadmin()
-    if not gm or not admin then return end
-    local adminls = admin:FindFirstChild("Admin LS")
-    if not adminls then return end
-    local template = adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem")
-    if not template then return end
-    local list = admin:FindFirstChild(listname)
-    if not list then return end
-
-    for _, child in ipairs(admin:GetChildren()) do
-        if child:IsA("ScrollingFrame") then child.Visible = false end
-    end
-    for _, child in ipairs(list:GetChildren()) do
-        if child:IsA("TextLabel") then child:Destroy() end
-    end
-
-    local titlebar = admin:FindFirstChild("TitleBar")
-    if titlebar and titlebar:FindFirstChild("Title") then
-        titlebar.Title.Text = titletext
-    end
-
-    for i, item in ipairs(items) do
-        local clone = template:Clone()
-        clone.Name = "Item" .. i
-        clone.Text = labelfactory(item)
-        clone.LayoutOrder = i
-        clone.Parent = list
-    end
-
-    list.Visible = true
-
-    local layout = list:FindFirstChildOfClass("UIListLayout")
-    if layout then
-        list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
-    end
-
-    currentlistname = listname
-end
-
-local function openadminlist(listname, titletext, items, labelfactory)
-    renderlist(listname, titletext, items, labelfactory)
-    local gm, admin = getadmin()
-    if not admin then return end
-    gm.Enabled = true
-    admin.Position = UDim2.new(0.5, 0, 1.5, 0)
-    admin.Visible = true
-    _G.InMenu = admin
-    _G.InMenuType = "Small"
-    tween:Create(
-        admin,
-        TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        { Position = UDim2.new(0.5, 0, 0.5, 0) }
-    ):Play()
-end
-
-local function loglabel(e)
-    local actor = tostring(e[1] or "?")
-    local cmd = tostring(e[2] or "")
-    local tgt = tostring(e[3] or "")
-    local rsn = tostring(e[4] or "")
-    local parts = { actor }
-    if cmd ~= "" then table.insert(parts, cmd) end
-    if tgt ~= "" then table.insert(parts, tgt) end
-    if rsn ~= "" then table.insert(parts, rsn) end
-    return table.concat(parts, " --> ")
-end
-
-local function openlogswith(filter)
-    local items = _G._adminLogsCache
-    if filter and filter ~= "" then
-        local pfx = filter:lower()
-        local filtered = {}
-        for _, e in ipairs(items) do
-            local actor = tostring(e[1] or ""):lower()
-            local tgt = tostring(e[3] or ""):lower()
-            if actor:sub(1, #pfx) == pfx
-                or (tgt ~= "" and tgt:sub(1, #pfx) == pfx) then
-                table.insert(filtered, e)
-            end
-        end
-        items = filtered
-        if #items == 0 then
-            items = { { "no matches", "", "", "", 0 } }
-        end
-    elseif #items == 0 then
-        items = { { "no commands yet", "", "", "", 0 } }
-    end
-    openadminlist("LogsList", "Command Logs", items, loglabel)
-end
 
 local function onlocalcommand(text)
     local cmd = parsecommandname(text)
