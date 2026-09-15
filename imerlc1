@@ -347,8 +347,13 @@ local function onlocalcommand(text)
     end
 end
 
+local lastseen = {}
 local function handlemessage(text)
     if not enabled then return end
+    local now = tick()
+    local prev = lastseen[text]
+    if prev and (now - prev) < 1.5 then return end
+    lastseen[text] = now
     onlocalcommand(text)
 end
 
