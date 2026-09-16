@@ -14,7 +14,6 @@ local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
-local coregui = game:GetService("CoreGui")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -25,6 +24,8 @@ local notifyready = false
 local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
+local chatspy = false
+local adminnotify = false
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
@@ -114,6 +115,36 @@ local function resolveplayer(prefix)
         if dn:lower():sub(1, #pfx) == pfx then return p end
     end
     return nil
+end
+
+local function teamcolorname(plr)
+    if not plr or not plr.Team then return "White" end
+    local tn = (plr.Team.Name or ""):lower()
+    if tn:find("sheriff") then return "Brown" end
+    if tn:find("police") or tn:find("law") or tn:find("troop") or tn:find("state") then return "Blue" end
+    if tn:find("fire") or tn:find("ems") or tn:find("medical") or tn:find("paramedic") then return "Red" end
+    if tn:find("dot") or tn:find("transport") or tn:find("highway") then return "Orange" end
+    if tn:find("civilian") or tn:find("civ") or tn:find("citizen") then return "White" end
+    return "Grey"
+end
+
+local function boldselfwords(text)
+    if not text or text == "" then return text end
+    local myname = lp.Name:lower()
+    local mydisplay = (lp.DisplayName or ""):lower()
+    local out = text:gsub("%S+", function(word)
+        local wlow = word:lower()
+        if #wlow >= 2 then
+            if myname:sub(1, #wlow) == wlow then
+                return "<b>" .. word .. "</b>"
+            end
+            if mydisplay ~= "" and mydisplay:sub(1, #wlow) == wlow then
+                return "<b>" .. word .. "</b>"
+            end
+        end
+        return word
+    end)
+    return out
 end
 
 function getadmin()
@@ -213,7 +244,7 @@ end
 local PRIVATE_NOTE = " <b>Only works for roleplay servers.</b>"
 
 local customcommands = {
-    { cmd = ":track",    args = { "[Player]" },           desc = "Enables PRC mod esp on the selected player", aliases = {} },
+    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
     { cmd = ":load",     args = {},                        desc = "Loads/Respawns you.", aliases = {} },
     { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
     { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
@@ -225,6 +256,8 @@ local customcommands = {
     { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
     { cmd = ":commands", args = {},                        desc = "Opens this command list.", aliases = { "cmds" } },
     { cmd = ":view",     args = { "[Player]" },            desc = "Views a player.", aliases = {} },
+    { cmd = ":chatspybutbetter", args = {},                desc = "Toggles chat spy with team colored notifications.", aliases = { "chatspybb" } },
+    { cmd = ":commandnotifierbutbetter", args = {},        desc = "Toggles admin command notifier.", aliases = { "cnbb" } },
 }
 
 local function buildcommanditems(adminls, list)
@@ -233,7 +266,7 @@ local function buildcommanditems(adminls, list)
 
     local header = template:Clone()
     header.Name = "CustomHeader"
-    header.Text = "<b>ERX Commands</b>"
+    header.Text = "<b>Custom Commands</b>"
     header.LayoutOrder = 0
     header.RichText = true
     pcall(function() header.TextScaled = false end)
@@ -413,6 +446,47 @@ local function addadminlog(actor, message)
     onentryadded()
 end
 
+local function extractfirstarg(text)
+    local rest = text:sub(2):gsub("^%s+", "")
+    local name = rest:match("^(%a+)") or ""
+    local after = rest:sub(#name + 1):gsub("^%s+", "")
+    if after == "" then return "", "" end
+    local first, remainder = after:match("^(%S+)%s*(.*)$")
+    return first or "", remainder or ""
+end
+
+local function notifyadmincommand(plr, text)
+    local cmd = parsecommandname(text)
+    if not cmd then return end
+    local first, _ = extractfirstarg(text)
+    local p = resolveplayer(first)
+    local display = p and p.Name or first
+
+    if cmd == ":ban" then
+        if display ~= "" then
+            notify("Red", plr.Name .. " banned " .. display, 8)
+        end
+    elseif cmd == ":kick" then
+        if display ~= "" then
+            notify("Red", plr.Name .. " kicked " .. display, 8)
+        end
+    elseif cmd == ":to" then
+        if display ~= "" then
+            notify("Yellow", plr.Name .. " teleported to " .. display, 8)
+        end
+    elseif cmd == ":bring" then
+        if display ~= "" then
+            notify("Yellow", plr.Name .. " brought " .. display, 8)
+        end
+    end
+end
+
+local function notifychatspy(plr, text)
+    local color = teamcolorname(plr)
+    local bolded = boldselfwords(text)
+    notify(color, plr.Name .. ": " .. bolded, 8)
+end
+
 pcall(function()
     local conn
     local seen = {}
@@ -426,20 +500,31 @@ pcall(function()
         end
     end
 
+    local function onvisible(plr, text)
+        if plr == lp then return end
+        if chatspy then notifychatspy(plr, text) end
+        if adminnotify and parsecommandname(text) then notifyadmincommand(plr, text) end
+    end
+
     if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
         conn = textchatservice.MessageReceived:Connect(function(msg)
             local text = msg.Text or ""
-            if not parsecommandname(text) then return end
             local p = msg.TextSource and players:GetPlayerByUserId(msg.TextSource.UserId)
             if p then
-                onreceived(p.Name, text)
-            else
-                onreceived("Remote Server", text)
+                onvisible(p, text)
+            end
+            if parsecommandname(text) then
+                if p then
+                    onreceived(p.Name, text)
+                else
+                    onreceived("Remote Server", text)
+                end
             end
         end)
     else
         local function hook(p)
             local c = p.Chatted:Connect(function(m)
+                onvisible(p, m)
                 if parsecommandname(m) then addadminlog(p.Name, m) end
             end)
             table.insert(_G._adminCommandsLoaded, c)
@@ -465,6 +550,10 @@ local function onlocalcommand(text)
         openadminlist("CommandsList", "Admin Commands", {}, function(c) return c end)
     elseif cmd == ":logs" then
         openlogswith(argstr)
+    elseif cmd == ":chatspybutbetter" or cmd == ":chatspybb" then
+        chatspy = not chatspy
+    elseif cmd == ":commandnotifierbutbetter" or cmd == ":cnbb" then
+        adminnotify = not adminnotify
     elseif cmd == ":log" then
         local playerarg, reason = argstr:match("^(%S+)%s+(.+)$")
         if not playerarg then
@@ -486,7 +575,7 @@ local function onlocalcommand(text)
                 local r = fe:FindFirstChild(rn)
                 if r and r:IsA("RemoteEvent") then
                     pcall(function() r:FireServer("log", display, reason) end)
-                    pcall(function() r:FireServer(display, reason) end)   -- no idea if any of these would work
+                    pcall(function() r:FireServer(display, reason) end)
                     pcall(function() r:FireServer(lp.Name, display, reason) end)
                 end
             end
@@ -515,21 +604,6 @@ pcall(function()
     end
     local c2 = lp.Chatted:Connect(handlemessage)
     table.insert(_G._adminCommandsLoaded, c2)
-end)
-
-pcall(function()
-    local bar = coregui:FindFirstChild("CommandBar") or coregui:WaitForChild("CommandBar", 15)
-    if not bar then return end
-    local box = bar:FindFirstChild("CommandBar") or bar:WaitForChild("CommandBar", 5)
-    if not box or not box:IsA("TextBox") then return end
-    local c = box.FocusLost:Connect(function(enterPressed)
-        if not enterPressed then return end
-        local text = box.Text or ""
-        if text == "" then return end
-        handlemessage(text)
-        box.Text = ""
-    end)
-    table.insert(_G._adminCommandsLoaded, c)
 end)
 
 local tab = tabs.Players
