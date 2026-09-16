@@ -14,7 +14,7 @@ local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
-local userinputservice = game:GetService("UserInputService")
+local coregui = game:GetService("CoreGui")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -32,13 +32,13 @@ local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
 
 local TEAM_COLOR = {
-    sheriff  = "Brown",
-    police   = "Blue",
-    jail     = "Grey",
-    fire     = "Red",
-    dot      = "Orange",
-    civilian = "White",
-    default  = "White",
+    sheriff  = Color3.fromRGB(175, 148, 131),
+    police   = Color3.fromRGB(110, 153, 202),
+    jail     = Color3.fromRGB(128, 128, 128),
+    fire     = Color3.fromRGB(196, 40, 28),
+    dot      = Color3.fromRGB(226, 155, 64),
+    civilian = Color3.fromRGB(159, 161, 172),
+    default  = Color3.fromRGB(159, 161, 172),
 }
 
 local function getblur()
@@ -613,20 +613,16 @@ pcall(function()
 end)
 
 pcall(function()
-    local c = userinputservice.InputBegan:Connect(function(input, processed)
-        if processed then return end
-        local kc = input.KeyCode
-        if kc ~= Enum.KeyCode.Return and kc ~= Enum.KeyCode.KeypadEnter then return end
-        local box = userinputservice:GetFocusedTextBox()
-        if not box then return end
+    local bar = coregui:FindFirstChild("CommandBar") or coregui:WaitForChild("CommandBar", 15)
+    if not bar then return end
+    local box = bar:FindFirstChild("CommandBar") or bar:WaitForChild("CommandBar", 5)
+    if not box or not box:IsA("TextBox") then return end
+    local c = box.FocusLost:Connect(function(enterPressed)
+        if not enterPressed then return end
         local text = box.Text or ""
         if text == "" then return end
-        local fc = text:sub(1, 1)
-        if fc ~= ":" and fc ~= "!" and fc ~= ";" then return end
-        task.defer(function()
-            handlemessage(text)
-            box.Text = ""
-        end)
+        handlemessage(text)
+        box.Text = ""
     end)
     table.insert(_G._adminCommandsLoaded, c)
 end)
