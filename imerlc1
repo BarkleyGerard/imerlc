@@ -213,7 +213,7 @@ local PRIVATE_NOTE = " <b>Only works for roleplay servers.</b>"
 
 local customcommands = {
     { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
-    { cmd = ":load",     args = {},                        desc = "Loads the current vehicle.", aliases = {} },
+    { cmd = ":load",     args = {},                        desc = "Loads/Respawns you.", aliases = {} },
     { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
     { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
     { cmd = ":unjail",   args = {},                        desc = "Frees you from jail." .. PRIVATE_NOTE, aliases = {} },
