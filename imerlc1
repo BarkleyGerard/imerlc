@@ -212,7 +212,7 @@ local function wirecommandhover(clone)
     end)
 end
 
-local PRIVATE_NOTE = " <b>Only works for private servers.</b>"
+local PRIVATE_NOTE = " <b>Only works for roleplay servers.</b>"
 
 local customcommands = {
     { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
