@@ -233,7 +233,7 @@ local function buildcommanditems(adminls, list)
 
     local header = template:Clone()
     header.Name = "CustomHeader"
-    header.Text = "<b>Custom Commands</b>"
+    header.Text = "<b>ERX Commands</b>"
     header.LayoutOrder = 0
     header.RichText = true
     pcall(function() header.TextScaled = false end)
