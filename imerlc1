@@ -501,7 +501,6 @@ pcall(function()
     end
 
     local function onvisible(plr, text)
-        if plr == lp then return end
         if chatspy then notifychatspy(plr, text) end
         if adminnotify and parsecommandname(text) then notifyadmincommand(plr, text) end
     end
