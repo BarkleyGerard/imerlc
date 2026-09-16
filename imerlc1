@@ -19,27 +19,17 @@ local lp = players.LocalPlayer
 local enabled = true
 
 _G._adminLogsCache = {}
+_G._chatLogsCache = {}
 
 local notifycallback = nil
 local notifyready = false
 local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
-local chatspy = false
-local adminnotify = false
+local notifcontainer = nil
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
-
-local TEAM_COLOR = {
-    sheriff  = Color3.fromRGB(175, 148, 131),
-    police   = Color3.fromRGB(110, 153, 202),
-    jail     = Color3.fromRGB(128, 128, 128),
-    fire     = Color3.fromRGB(196, 40, 28),
-    dot      = Color3.fromRGB(226, 155, 64),
-    civilian = Color3.fromRGB(159, 161, 172),
-    default  = Color3.fromRGB(159, 161, 172),
-}
 
 local function getblur()
     local b = lighting:FindFirstChild(BLURNAME)
@@ -65,6 +55,35 @@ local function disableblur()
     b.Size = 0
     b.Enabled = false
 end
+
+local function findnotifcontainer()
+    local pg = lp:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local gg = pg:FindFirstChild("GameGui")
+    if not gg then return nil end
+    local bl = gg:FindFirstChild("BottomLeft")
+    if not bl then return nil end
+    return bl:FindFirstChild("Notifications")
+end
+
+task.spawn(function()
+    for _ = 1, 60 do
+        notifcontainer = findnotifcontainer()
+        if notifcontainer then break end
+        task.wait(0.5)
+    end
+    if not notifcontainer then return end
+    notifcontainer.ChildAdded:Connect(function(child)
+        if not child:FindFirstChild("Frame") then
+            local pad = Instance.new("Frame")
+            pad.Name = "Frame"
+            pad.Visible = false
+            pad.Size = UDim2.new(0, 0, 0, 0)
+            pad.BackgroundTransparency = 1
+            pad.Parent = child
+        end
+    end)
+end)
 
 local function fetchnotifycallback()
     local list
@@ -126,37 +145,6 @@ local function resolveplayer(prefix)
         if dn:lower():sub(1, #pfx) == pfx then return p end
     end
     return nil
-end
-
-local function teamcolor(plr)
-    if not plr or not plr.Team then return TEAM_COLOR.default end
-    local tn = (plr.Team.Name or ""):lower()
-    if tn:find("sheriff") then return TEAM_COLOR.sheriff end
-    if tn:find("police") or tn:find("law") or tn:find("troop") or tn:find("state") then return TEAM_COLOR.police end
-    if tn:find("jail") then return TEAM_COLOR.jail end
-    if tn:find("fire") or tn:find("ems") or tn:find("medical") or tn:find("paramedic") then return TEAM_COLOR.fire end
-    if tn:find("dot") or tn:find("transport") or tn:find("highway") then return TEAM_COLOR.dot end
-    if tn:find("civilian") or tn:find("civ") or tn:find("citizen") then return TEAM_COLOR.civilian end
-    return TEAM_COLOR.default
-end
-
-local function boldselfwords(text)
-    if not text or text == "" then return text end
-    local myname = lp.Name:lower()
-    local mydisplay = (lp.DisplayName or ""):lower()
-    local out = text:gsub("%S+", function(word)
-        local wlow = word:lower()
-        if #wlow >= 2 then
-            if myname:sub(1, #wlow) == wlow then
-                return "<b>" .. word .. "</b>"
-            end
-            if mydisplay ~= "" and mydisplay:sub(1, #wlow) == wlow then
-                return "<b>" .. word .. "</b>"
-            end
-        end
-        return word
-    end)
-    return out
 end
 
 function getadmin()
@@ -265,11 +253,10 @@ local customcommands = {
     { cmd = ":resetdata",args = {},                        desc = "Resets your session data." .. PRIVATE_NOTE, aliases = {} },
     { cmd = ":killlogs", args = {},                        desc = "Shows kill logs (work in progress).", aliases = { "kl" } },
     { cmd = ":logs",     args = { "[Player]" },            desc = "Shows command logs, filtered to a player.", aliases = {} },
+    { cmd = ":chatlogs", args = { "[Player]" },            desc = "Shows every chat message, filtered to a player.", aliases = {} },
     { cmd = ":log",      args = { "[Player]", "[Reason]" },desc = "Attempts to write a log entry.", aliases = {} },
     { cmd = ":commands", args = {},                        desc = "Opens this command list.", aliases = { "cmds" } },
     { cmd = ":view",     args = { "[Player]" },            desc = "Views a player.", aliases = {} },
-    { cmd = ":chatspybutbetter", args = {},                desc = "Toggles chat spy with team colored notifications.", aliases = { "chatspybb" } },
-    { cmd = ":commandnotifierbutbetter", args = {},        desc = "Toggles admin command notifier.", aliases = { "cnbb" } },
 }
 
 local function buildcommanditems(adminls, list)
@@ -340,7 +327,7 @@ local function renderlist(listname, titletext, items, labelfactory)
 
     local search = admin:FindFirstChild("Search")
     if search then
-        search.Visible = (listname == "LogsList")
+        search.Visible = (listname == "LogsList" or listname == "ChatLogsList")
         if search:IsA("TextBox") then search.Text = "" end
     end
 
@@ -392,6 +379,10 @@ local function loglabel(e)
     return tostring(e[1] or "?") .. " - " .. tostring(e[2] or "")
 end
 
+local function chatloglabel(e)
+    return tostring(e[1] or "?") .. " - " .. tostring(e[2] or "")
+end
+
 local function openlogswith(filter)
     local items = _G._adminLogsCache
     if filter and filter ~= "" then
@@ -411,6 +402,27 @@ local function openlogswith(filter)
         items = { { "no commands yet", "waiting for a command" } }
     end
     openadminlist("LogsList", "Admin Logs", items, loglabel)
+end
+
+local function openchatlogswith(filter)
+    local items = _G._chatLogsCache
+    if filter and filter ~= "" then
+        local pfx = filter:lower()
+        local filtered = {}
+        for _, e in ipairs(items) do
+            local actor = tostring(e[1] or ""):lower()
+            if actor:sub(1, #pfx) == pfx then
+                table.insert(filtered, e)
+            end
+        end
+        items = filtered
+        if #items == 0 then
+            items = { { "no matches", "no chat matching '" .. filter .. "'" } }
+        end
+    elseif #items == 0 then
+        items = { { "no chat yet", "waiting for a message" } }
+    end
+    openadminlist("ChatLogsList", "Chat Logs", items, chatloglabel)
 end
 
 local function onentryadded()
@@ -449,6 +461,41 @@ local function onentryadded()
                 end
             end)
         end)
+    elseif currentlistname == "ChatLogsList" then
+        task.spawn(function()
+            pcall(function()
+                local items = _G._chatLogsCache
+                if #items == 0 then
+                    items = { { "no chat yet", "waiting for a message" } }
+                end
+                local gm, admin = getadmin()
+                if not admin then return end
+                local list = admin:FindFirstChild("ChatLogsList")
+                if not list or not list.Visible then return end
+                local adminls = admin:FindFirstChild("Admin LS")
+                local template = adminls and (adminls:FindFirstChild("ListItem") or adminls:FindFirstChild("CommandListItem"))
+                if not template then return end
+                for _, child in ipairs(list:GetChildren()) do
+                    if child:IsA("TextLabel") then child:Destroy() end
+                end
+                for i, item in ipairs(items) do
+                    local clone = template:Clone()
+                    clone.Name = "Item" .. i
+                    clone.Text = chatloglabel(item)
+                    clone.LayoutOrder = i
+                    clone.Parent = list
+                    wirehover(clone, admin)
+                end
+                local layout = list:FindFirstChildOfClass("UIListLayout")
+                if layout then
+                    list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+                end
+                local search = admin:FindFirstChild("Search")
+                if search and search:IsA("TextBox") and search.Text ~= "" then
+                    filterlist(admin, search.Text)
+                end
+            end)
+        end)
     end
 end
 
@@ -463,58 +510,24 @@ local function addadminlog(actor, message)
     onentryadded()
 end
 
-local function extractfirstarg(text)
-    local rest = text:sub(2):gsub("^%s+", "")
-    local name = rest:match("^(%a+)") or ""
-    local after = rest:sub(#name + 1):gsub("^%s+", "")
-    if after == "" then return "", "" end
-    local first, remainder = after:match("^(%S+)%s*(.*)$")
-    return first or "", remainder or ""
-end
-
-local function notifyadmincommand(plr, text)
-    local cmd = parsecommandname(text)
-    if not cmd then return end
-    local first, _ = extractfirstarg(text)
-    local p = resolveplayer(first)
-    local display = p and p.Name or first
-
-    if cmd == ":ban" then
-        if display ~= "" then
-            notify("Red", plr.Name .. " banned " .. display, 8)
-        end
-    elseif cmd == ":kick" then
-        if display ~= "" then
-            notify("Red", plr.Name .. " kicked " .. display, 8)
-        end
-    elseif cmd == ":to" then
-        if display ~= "" then
-            notify("Yellow", plr.Name .. " teleported to " .. display, 8)
-        end
-    elseif cmd == ":bring" then
-        if display ~= "" then
-            notify("Yellow", plr.Name .. " brought " .. display, 8)
-        end
-    end
-end
-
-local function notifychatspy(plr, text)
-    local color = teamcolor(plr)
-    local bolded = boldselfwords(text)
-    notify(color, plr.Name .. ": " .. bolded, 8)
+local chatseen = {}
+local function addchatlog(actor, message)
+    if type(actor) ~= "string" or actor == "" then actor = "Remote Server" end
+    local key = actor .. "|" .. message
+    local now = tick()
+    if chatseen[key] and (now - chatseen[key]) < 2 then return end
+    chatseen[key] = now
+    table.insert(_G._chatLogsCache, 1, { actor, message })
+    onentryadded()
 end
 
 pcall(function()
     local conn
     local function onreceived(actor, message)
+        addchatlog(actor, message)
         if parsecommandname(message) then
             addadminlog(actor, message)
         end
-    end
-
-    local function onvisible(plr, text)
-        if chatspy then notifychatspy(plr, text) end
-        if adminnotify and parsecommandname(text) then notifyadmincommand(plr, text) end
     end
 
     if textchatservice.ChatVersion ~= Enum.ChatVersion.LegacyChatService then
@@ -522,7 +535,6 @@ pcall(function()
             local text = msg.Text or ""
             local p = msg.TextSource and players:GetPlayerByUserId(msg.TextSource.UserId)
             if p then
-                onvisible(p, text)
                 onreceived(p.Name, text)
             else
                 onreceived("Remote Server", text)
@@ -531,7 +543,6 @@ pcall(function()
     else
         local function hook(p)
             local c = p.Chatted:Connect(function(m)
-                onvisible(p, m)
                 onreceived(p.Name, m)
             end)
             table.insert(_G._adminCommandsLoaded, c)
@@ -557,10 +568,8 @@ local function onlocalcommand(text)
         openadminlist("CommandsList", "Admin Commands", {}, function(c) return c end)
     elseif cmd == ":logs" then
         openlogswith(argstr)
-    elseif cmd == ":chatspybutbetter" or cmd == ":chatspybb" then
-        chatspy = not chatspy
-    elseif cmd == ":commandnotifierbutbetter" or cmd == ":cnbb" then
-        adminnotify = not adminnotify
+    elseif cmd == ":chatlogs" then
+        openchatlogswith(argstr)
     elseif cmd == ":log" then
         local playerarg, reason = argstr:match("^(%S+)%s+(.+)$")
         if not playerarg then
@@ -634,7 +643,7 @@ pcall(function() sec:Open() end)
 
 sec:Toggle({
     Title = "more chat commands",
-    Desc  = "adds :cmds / :logs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
+    Desc  = "adds :cmds / :logs [player] / :chatlogs [player] / :log [player] [reason] and killlogs (coming soon maybe)",
     Value = true,
     Callback = function(s) enabled = s end,
 })
