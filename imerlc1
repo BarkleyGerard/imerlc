@@ -14,7 +14,6 @@ local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
-local workspace = game:GetService("Workspace")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -25,8 +24,6 @@ local notifyready = false
 local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
-local camerawired = false
-local wasonother = false
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
@@ -453,48 +450,6 @@ pcall(function()
     if conn then table.insert(_G._adminCommandsLoaded, conn) end
 end)
 
-local function subjectisother(subj)
-    if not subj then return false end
-    for _, p in ipairs(players:GetPlayers()) do
-        if p ~= lp and p.Character and subj:IsDescendantOf(p.Character) then
-            return true
-        end
-    end
-    return false
-end
-
-local function anchorroot()
-    task.spawn(function()
-        local char = lp.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        root.Anchored = true
-        task.wait(1.8)
-        if root and root.Parent then
-            root.Anchored = false
-        end
-    end)
-end
-
-local function wirecamera()
-    if camerawired then return end
-    camerawired = true
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-
-    wasonother = subjectisother(cam.CameraSubject)
-
-    cam:GetPropertyChangedSignal("CameraSubject"):Connect(function()
-        local nowother = subjectisother(cam.CameraSubject)
-        if wasonother and not nowother then
-            anchorroot()
-        end
-        wasonother = nowother
-    end)
-end
-
-wirecamera()
-
 local function onlocalcommand(text)
     local cmd = parsecommandname(text)
     if not cmd then return end
@@ -521,7 +476,8 @@ local function onlocalcommand(text)
         end
         local p = resolveplayer(playerarg)
         local display = p and p.Name or playerarg
-        notify("Green", "You're command is being processed by Melonly", 5)
+        notify("Green", "Your command is being processed by Melonly", 5)
+        addadminlog(lp.Name, ":log " .. display .. " " .. reason)
         pcall(function()
             local fe = replicatedstorage:FindFirstChild("FE")
             if not fe then return end
