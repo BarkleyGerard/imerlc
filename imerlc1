@@ -14,6 +14,7 @@ local replicatedstorage = game:GetService("ReplicatedStorage")
 local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
+local coregui = game:GetService("CoreGui")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -485,7 +486,7 @@ local function onlocalcommand(text)
                 local r = fe:FindFirstChild(rn)
                 if r and r:IsA("RemoteEvent") then
                     pcall(function() r:FireServer("log", display, reason) end)
-                    pcall(function() r:FireServer(display, reason) end)
+                    pcall(function() r:FireServer(display, reason) end)   -- no idea if any of these would work
                     pcall(function() r:FireServer(lp.Name, display, reason) end)
                 end
             end
@@ -514,6 +515,21 @@ pcall(function()
     end
     local c2 = lp.Chatted:Connect(handlemessage)
     table.insert(_G._adminCommandsLoaded, c2)
+end)
+
+pcall(function()
+    local bar = coregui:FindFirstChild("CommandBar") or coregui:WaitForChild("CommandBar", 15)
+    if not bar then return end
+    local box = bar:FindFirstChild("CommandBar") or bar:WaitForChild("CommandBar", 5)
+    if not box or not box:IsA("TextBox") then return end
+    local c = box.FocusLost:Connect(function(enterPressed)
+        if not enterPressed then return end
+        local text = box.Text or ""
+        if text == "" then return end
+        handlemessage(text)
+        box.Text = ""
+    end)
+    table.insert(_G._adminCommandsLoaded, c)
 end)
 
 local tab = tabs.Players
