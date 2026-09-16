@@ -213,7 +213,7 @@ end
 local PRIVATE_NOTE = " <b>Only works for roleplay servers.</b>"
 
 local customcommands = {
-    { cmd = ":track",    args = { "[Player]" },           desc = "Continuously tracks a specified player.", aliases = {} },
+    { cmd = ":track",    args = { "[Player]" },           desc = "Enables PRC mod esp on the selected player", aliases = {} },
     { cmd = ":load",     args = {},                        desc = "Loads/Respawns you.", aliases = {} },
     { cmd = ":tocar",    args = {},                        desc = "Teleports you to your vehicle.", aliases = {} },
     { cmd = ":to",       args = { "[Player]" },            desc = "Teleports you to a player.", aliases = {} },
