@@ -15,6 +15,7 @@ local textchatservice = game:GetService("TextChatService")
 local tween = game:GetService("TweenService")
 local lighting = game:GetService("Lighting")
 local coregui = game:GetService("CoreGui")
+local runservice = game:GetService("RunService")
 local lp = players.LocalPlayer
 local enabled = true
 
@@ -27,6 +28,7 @@ local currentlistname = nil
 local searchwired = false
 local bluroffwired = false
 local notifcontainer = nil
+local blurhold = false
 
 local BLURNAME = "MCL_AdminBlur"
 local blurgoal = 24
@@ -54,6 +56,28 @@ local function disableblur()
     if not b then return end
     b.Size = 0
     b.Enabled = false
+end
+
+local function startblurhold()
+    if blurhold then return end
+    blurhold = true
+    task.spawn(function()
+        while blurhold do
+            local b = lighting:FindFirstChild(BLURNAME)
+            local _, admin = getadmin()
+            if admin and admin.Visible and admin.Position.Y.Scale < 1.4 then
+                if b then
+                    b.Enabled = true
+                    b.Size = blurgoal
+                end
+            else
+                break
+            end
+            task.wait()
+        end
+        blurhold = false
+        disableblur()
+    end)
 end
 
 local function findnotifcontainer()
@@ -368,6 +392,7 @@ local function openadminlist(listname, titletext, items, labelfactory)
     _G.InMenu = admin
     _G.InMenuType = "Small"
     enableblur()
+    startblurhold()
     tween:Create(
         admin,
         TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -630,8 +655,10 @@ pcall(function()
         if not enterPressed then return end
         local text = box.Text or ""
         if text == "" then return end
-        handlemessage(text)
-        box.Text = ""
+        task.defer(function()
+            handlemessage(text)
+            box.Text = ""
+        end)
     end)
     table.insert(_G._adminCommandsLoaded, c)
 end)
